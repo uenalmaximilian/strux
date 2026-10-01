@@ -32,7 +32,7 @@ class Parser {
     Token* expect(TokenType expected) {
         Token* t = advance()
         if t.type() != expected then
-            printf("error: expected %d, got %d (%s) at position %d\n", expected, t.type(), t.value(), i)
+            printf("Syntax Error [%d:%d]: Expected '%s', got '%s' (value: '%s')\n", t.line(), t.col(), t.get_token_type_name(expected), t.get_token_type_name(t.type()), t.value())
             exit(1)
         end
         return t
@@ -251,7 +251,11 @@ class Parser {
                 break
 
             else:
-                printf("error: unexpected token at position %d in expression: %s\n", i, t.value())
+                char* val = t.value()
+                if val == NULL or strlen(val) == 0 then
+                    val = "<empty>"
+                end
+                printf("Syntax Error [%d:%d]: Unexpected token '%s' (Type: %s) in expression\n", t.line(), t.col(), val, t.get_token_type_name(t.type()))
                 exit(1)
         end
 

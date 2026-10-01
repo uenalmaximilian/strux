@@ -8,6 +8,8 @@ class Lexer {
     char* source
     char current_char
     unsigned int i = 0
+    int line = 1
+    int col = 1
 
     void init(char* source_) {
         source = source_
@@ -16,6 +18,12 @@ class Lexer {
 
     void advance() {
         if current_char != '\0' and i < strlen(source) then
+            if current_char == '\n' then
+                line++
+                col = 1
+            else
+                col++
+            end
             i = i + 1
             current_char = source[i]
         end
@@ -37,6 +45,13 @@ class Lexer {
     Token* advance_with_token(Token* token) {
         advance()
         return token
+    }
+
+    Token* create_token(TokenType type, char* value) {
+        Token* t = Token(type, value)
+        t.line(line)
+        t.col(col)
+        return t
     }
 
     Token* collect_string() {
@@ -73,11 +88,11 @@ class Lexer {
 
         value[length] = '\0'
 
-        Token* t = Token(TOKEN_STRING, value)
+        Token* t = create_token(TOKEN_STRING, value)
         if current_char == '"' then 
             advance()
         else 
-            t = Token(TOKEN_EOF, "")
+            t = create_token(TOKEN_EOF, "")
         end
 
         return t
@@ -105,7 +120,7 @@ class Lexer {
 
         value[val_idx] = '\0'
 
-        Token* t = Token(TOKEN_CHAR, value)
+        Token* t = create_token(TOKEN_CHAR, value)
         return t
     }
 
@@ -206,7 +221,7 @@ class Lexer {
             advance()
         end
 
-        Token* t = Token(get_id_type(value), value)
+        Token* t = create_token(get_id_type(value), value)
         return t
     }
 
@@ -232,7 +247,7 @@ class Lexer {
             advance()
         end
 
-        Token* t = Token(TOKEN_NUMBER, value)
+        Token* t = create_token(TOKEN_NUMBER, value)
         return t
     }
 
@@ -254,7 +269,9 @@ class Lexer {
             type = TOKEN_ASSIGN
         end
 
-        Token* t = Token(type, value)
+        Token* t = create_token(type, value)
+        t.line(line)
+        t.col(col)
         return t
     }
 
@@ -299,40 +316,40 @@ class Lexer {
                     if peek_char(1) == '=' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_PLUS_ASSIGN, "+=")
+                        Token* t = create_token(TOKEN_PLUS_ASSIGN, "+=")
                         return t
                     elif peek_char(1) == '+' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_INC, "++")
+                        Token* t = create_token(TOKEN_INC, "++")
                         return t
                     end
-                    Token* t = Token(TOKEN_PLUS, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_PLUS, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '-':
                     if peek_char(1) == '=' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_MINUS_ASSIGN, "-=")
+                        Token* t = create_token(TOKEN_MINUS_ASSIGN, "-=")
                         return t
                     elif peek_char(1) == '-' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_DEC, "--")
+                        Token* t = create_token(TOKEN_DEC, "--")
                         return t
                     end
-                    Token* t = Token(TOKEN_MINUS, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_MINUS, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '*':
                     if peek_char(1) == '=' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_MUL_ASSIGN, "*=")
+                        Token* t = create_token(TOKEN_MUL_ASSIGN, "*=")
                         return t
                     end
-                    Token* t = Token(TOKEN_ASTERISK, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_ASTERISK, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '/':
@@ -345,33 +362,33 @@ class Lexer {
                     elif peek_char(1) == '=' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_DIV_ASSIGN, "/=")
+                        Token* t = create_token(TOKEN_DIV_ASSIGN, "/=")
                         return t
                     end
-                    Token* t = Token(TOKEN_DIV, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_DIV, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '%':
                     if peek_char(1) == '=' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_MOD_ASSIGN, "%=")
+                        Token* t = create_token(TOKEN_MOD_ASSIGN, "%=")
                         return t
                     end
-                    Token* t = Token(TOKEN_MOD, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_MOD, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '^':
                     if peek_char(1) == '=' then
                         advance()
                         advance()
-                        Token* t = Token(TOKEN_BIT_XOR_ASSIGN, "^=")
+                        Token* t = create_token(TOKEN_BIT_XOR_ASSIGN, "^=")
                         return t
                     end
-                    Token* t = Token(TOKEN_BIT_XOR, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_BIT_XOR, get_current_char_as_string())
                     return advance_with_token(t)
                 case '~':
-                    Token* t = Token(TOKEN_BIT_NOT, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_BIT_NOT, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '=':
@@ -383,35 +400,35 @@ class Lexer {
                     return collect_operator()
 
                 case '(':
-                    Token* t = Token(TOKEN_LPAREN, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_LPAREN, get_current_char_as_string())
                     return advance_with_token(t)
                 case ')':
-                    Token* t = Token(TOKEN_RPAREN, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_RPAREN, get_current_char_as_string())
                     return advance_with_token(t)
                 case '{':
-                    Token* t = Token(TOKEN_LBRACE, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_LBRACE, get_current_char_as_string())
                     return advance_with_token(t)
                 case '}':
-                    Token* t = Token(TOKEN_RBRACE, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_RBRACE, get_current_char_as_string())
                     return advance_with_token(t)
                 case '[':
-                    Token* t = Token(TOKEN_LBRACKET, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_LBRACKET, get_current_char_as_string())
                     return advance_with_token(t)
                 case ']':
-                    Token* t = Token(TOKEN_RBRACKET, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_RBRACKET, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '.':
-                    Token* t = Token(TOKEN_DOT, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_DOT, get_current_char_as_string())
                     return advance_with_token(t)
                 case ',':
-                    Token* t = Token(TOKEN_COMMA, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_COMMA, get_current_char_as_string())
                     return advance_with_token(t)
                 case ':':
-                    Token* t = Token(TOKEN_COLON, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_COLON, get_current_char_as_string())
                     return advance_with_token(t)
                 case ';':
-                    Token* t = Token(TOKEN_SEMICOLON, get_current_char_as_string())
+                    Token* t = create_token(TOKEN_SEMICOLON, get_current_char_as_string())
                     return advance_with_token(t)
 
                 case '\'':

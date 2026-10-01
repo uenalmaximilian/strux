@@ -1145,7 +1145,7 @@ class Generator {
 
                 FILE* file = fopen(node.value(), "r")
                 if file == NULL then
-                    printf("couldn't find file for import %s\n", node.value())
+                    printf("Import Error in '%s': Couldn't find file '%s' for import\n", source_file_name, node.value())
                     exit(1)
                 end
 
@@ -1156,7 +1156,7 @@ class Generator {
                 char* buffer = malloc(file_size + 1)
                 if buffer == NULL then
                     fclose(file)
-                    printf("error while allocating memory for %s\n", node.value())
+                    printf("Internal Compiler Error: Failed to allocate memory (%d bytes) for reading '%s'\n", file_size, node.value())
                     exit(1)
                 end
 
