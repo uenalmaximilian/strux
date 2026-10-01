@@ -1,0 +1,188 @@
+enum NodeType {
+    NODE_DUMMY,
+    NODE_PROGRAM,
+
+    NODE_CLASS_DEF,
+    NODE_FIELD_DEF,
+    NODE_METHOD_DEF,
+    NODE_ENUM_DEF,
+    NODE_ENUM_MEMBER,
+    NODE_EXTERN_FUNC,
+    NODE_PARAM,
+    NODE_CONSTRUCTOR_CALL,
+    NODE_FIELD_DEF_ASSIGN,
+    NODE_INTERFACE_DEF,
+    NODE_INTERFACE_METHOD_DECL,
+    NODE_BIND,
+
+    NODE_DECLARE,
+    NODE_DECLARE_ASSIGN,
+    NODE_ASSIGN,
+    NODE_DEREF_ASSIGN,
+    NODE_RETURN_STMT,
+    NODE_IF_STMT,
+    NODE_ELIF_STMT,
+    NODE_ELSE_STMT,
+    NODE_WHILE_STMT,
+    NODE_FOR_STMT,
+    NODE_SWITCH_STMT,
+    NODE_CASE,
+    NODE_ELSE_SWITCH,
+    NODE_BREAK,
+    NODE_CONTINUE,
+    NODE_EXPR_STMT,
+    NODE_PAREN,
+
+    NODE_BINARY_EXPR,
+    NODE_UNARY_EXPR,
+    NODE_VAR,
+    NODE_NUMBER,
+    NODE_CHAR_LIT,
+    NODE_BOOL_LIT,
+    NODE_STRING_LIT,
+    NODE_FUNC_CALL,
+    NODE_METHOD_CALL,
+    NODE_CHAIN_ACCESS,
+    NODE_SIZEOF,
+    NODE_DECLARE_ARRAY,
+    NODE_ARRAY_ASSIGN,
+    NODE_ARRAY_ACCESS,
+    NODE_ARRAY_METHOD_CALL,
+    NODE_COMPOUND_LITERAL,
+    NODE_CAST,
+
+    NODE_INCLUDE,
+    NODE_IMPORT,
+    NODE_GUARD,
+    NODE_DEFINE
+}
+
+class Node {
+    NodeType type
+    char* value = NULL
+    char* data_type = NULL
+
+    Node** children = NULL
+    unsigned int child_count = 0
+
+    Node* left = NULL
+    Node* right = NULL
+    Node* extra = NULL
+
+    void init(NodeType type_) {
+        type = type_
+    }
+
+    void add_child(Node* child) {
+        child_count = child_count + 1
+        children = realloc(children, child_count * sizeof(Node*))
+        children[child_count - 1] = child
+    }
+
+    void print_indent(int depth) {
+        int k = 0
+        while k < depth do
+            printf("  ")
+            k = k + 1
+        end
+    }
+
+    void dump_labeled(int depth, char* label) {
+        print_indent(depth)
+
+        if label != NULL and strlen(label) > 0 then
+            printf("(%s) ", label)
+        end
+
+        printf("- [%s]", get_node_type_name(type))
+
+        if value != NULL and strlen(value) > 0 then
+            printf(" value: '%s'", value)
+        end
+        if data_type != NULL and strlen(data_type) > 0 then
+            printf(" data_type: '%s'", data_type)
+        end
+        printf("\n")
+
+        if left != NULL then 
+            left.dump_labeled(depth + 1, "left") 
+        end
+        if right != NULL then 
+            right.dump_labeled(depth + 1, "right") 
+        end
+        if extra != NULL then 
+            extra.dump_labeled(depth + 1, "extra") 
+        end
+
+        int i = 0
+        while i < child_count do
+            if children[i] != NULL then
+                Node* child = children[i]
+                child.dump_labeled(depth + 1, "child")
+            end
+            i = i + 1
+        end
+    }
+
+    void dump(int depth) {
+        dump_labeled(depth, NULL)
+    }
+
+    char* get_node_type_name(NodeType t) {
+        switch t
+            case NODE_DUMMY: return "NODE_DUMMY"
+            case NODE_PROGRAM: return "NODE_PROGRAM"
+            case NODE_CLASS_DEF: return "NODE_CLASS_DEF"
+            case NODE_FIELD_DEF: return "NODE_FIELD_DEF"
+            case NODE_METHOD_DEF: return "NODE_METHOD_DEF"
+            case NODE_ENUM_DEF: return "NODE_ENUM_DEF"
+            case NODE_ENUM_MEMBER: return "NODE_ENUM_MEMBER"
+            case NODE_EXTERN_FUNC: return "NODE_EXTERN_FUNC"
+            case NODE_PARAM: return "NODE_PARAM"
+            case NODE_CONSTRUCTOR_CALL: return "NODE_CONSTRUCTOR_CALL"
+            case NODE_FIELD_DEF_ASSIGN: return "NODE_FIELD_DEF_ASSIGN"
+
+            case NODE_DECLARE: return "NODE_DECLARE"
+            case NODE_DECLARE_ASSIGN: return "NODE_DECLARE_ASSIGN"
+            case NODE_ASSIGN: return "NODE_ASSIGN"
+            case NODE_DEREF_ASSIGN: return "NODE_DEREF_ASSIGN"
+            case NODE_RETURN_STMT: return "NODE_RETURN_STMT"
+            case NODE_IF_STMT: return "NODE_IF_STMT"
+            case NODE_ELIF_STMT: return "NODE_ELIF_STMT"
+            case NODE_ELSE_STMT: return "NODE_ELSE_STMT"
+            case NODE_WHILE_STMT: return "NODE_WHILE_STMT"
+            case NODE_FOR_STMT: return "NODE_FOR_STMT"
+            case NODE_SWITCH_STMT: return "NODE_SWITCH_STMT"
+            case NODE_CASE: return "NODE_CASE"
+            case NODE_ELSE_SWITCH: return "NODE_ELSE_SWITCH"
+            case NODE_BREAK: return "NODE_BREAK"
+            case NODE_CONTINUE: return "NODE_CONTINUE"
+            case NODE_EXPR_STMT: return "NODE_EXPR_STMT"
+            case NODE_PAREN: return "NODE_PAREN"
+
+            case NODE_BINARY_EXPR: return "NODE_BINARY_EXPR"
+            case NODE_UNARY_EXPR: return "NODE_UNARY_EXPR"
+            case NODE_VAR: return "NODE_VAR"
+            case NODE_NUMBER: return "NODE_NUMBER"
+            case NODE_CHAR_LIT: return "NODE_CHAR_LIT"
+            case NODE_BOOL_LIT: return "NODE_BOOL_LIT"
+            case NODE_STRING_LIT: return "NODE_STRING_LIT"
+            case NODE_FUNC_CALL: return "NODE_FUNC_CALL"
+            case NODE_METHOD_CALL: return "NODE_METHOD_CALL"
+            case NODE_CHAIN_ACCESS: return "NODE_CHAIN_ACCESS"
+            case NODE_SIZEOF: return "NODE_SIZEOF"
+            case NODE_ARRAY_ACCESS: return "NODE_ARRAY_ACCESS"
+            case NODE_ARRAY_ASSIGN: return "NODE_ARRAY_ASSIGN"
+            case NODE_ARRAY_METHOD_CALL: return "NODE_ARRAY_METHOD_CALL"
+            case NODE_DECLARE_ARRAY: return "NODE_DECLARE_ARRAY"
+            case NODE_COMPOUND_LITERAL: return "NODE_COMPOUND_LITERAL"
+            case NODE_CAST: return "NODE_CAST"
+
+            case NODE_INCLUDE: return "NODE_INCLUDE"
+            case NODE_IMPORT: return "NODE_IMPORT"
+            case NODE_GUARD: return "NODE_GUARD"
+
+            else: return "UNKNOWN_NODE"
+        end
+    }
+}

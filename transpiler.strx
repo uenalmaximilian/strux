@@ -1,0 +1,118 @@
+include "stdio.h"
+include "stdlib.h"
+
+import "token.strx"
+import "lexer.strx"
+import "node.strx"
+import "parser.strx"
+import "codegen.strx"
+
+class Main {
+    int main(int argc, char** argv) {
+        if argc < 2 then
+            printf("strx.exe <source.strx> [strx flags] [gcc flags]\n")
+            return 1
+        end
+
+        FILE* file = fopen(argv[1], "r")
+        if file == NULL then
+            printf("couldn't open %s\n", argv[1])
+            return 1
+        end
+
+        fseek(file, 0, SEEK_END)
+        int file_size = ftell(file)
+        rewind(file)
+
+        char* buffer = malloc(file_size + 1)
+        if buffer == NULL then
+            fclose(file)
+            printf("error allocating memory for %s\n", argv[1])
+            return 1
+        end
+
+        int bytes_read = fread(buffer, 1, file_size, file)
+        buffer[bytes_read] = '\0'
+        fclose(file)
+
+        Lexer* lexer = Lexer(buffer)
+
+        int capacity = 16
+        int token_count = 0
+        Token** tokens = malloc(capacity * sizeof(Token*))
+
+        while true do
+            Token* token = lexer.get_next_token()
+            if token == NULL then
+                break
+            end
+
+            if token_count >= capacity then
+                capacity = capacity * 2
+                tokens = realloc(tokens, capacity * sizeof(Token*))
+            end
+
+            tokens[token_count] = token
+            token_count = token_count + 1
+        end
+
+        if token_count >= capacity then
+            capacity = capacity + 1
+            tokens = realloc(tokens, capacity * sizeof(Token*))
+        end
+
+        Token* eof = Token(TOKEN_EOF, "")
+        tokens[token_count] = eof
+        token_count = token_count + 1
+
+        Parser* parser = Parser(tokens, token_count)
+        Node* ast = parser.parse()
+        ast.value(argv[1])
+
+        Generator* gen = Generator()
+        char* output = gen.generate(ast)
+
+        char cmd[1024]
+        snprintf(cmd, sizeof(cmd), "gcc -xc -")
+
+        bool emit_c = false
+        for int i = 2; i < argc; i++ do
+            if strcmp(argv[i], "--emit-c") == 0 then
+                emit_c = true
+            else
+                snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " %s", argv[i])
+            end
+        end
+
+        if emit_c == true then
+            printf("%s\n", output)
+        else
+            FILE* gcc_pipe = _popen(cmd, "w")
+            if gcc_pipe == NULL then
+                printf("error while opening gcc pipe\n")
+                return 1
+            end
+
+            fputs(output, gcc_pipe)
+
+            int status = _pclose(gcc_pipe)
+            if status != 0 then
+                printf("error while closing gcc pipe\n")
+                return 1
+            end
+        end
+
+        for int i = 0; i < token_count; i = i + 1 do
+            free(tokens[i])
+        end
+        free(tokens)
+        free(lexer)
+        free(parser)
+        free(ast)
+        free(gen)
+        free(output)
+        free(buffer)
+
+        return 0
+    }
+}

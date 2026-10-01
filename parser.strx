@@ -1,0 +1,922 @@
+include "stdlib.h"
+include "string.h"
+
+import "token.strx"
+import "node.strx"
+
+class Parser {
+    Token** tokens
+    unsigned int max_tokens
+    unsigned int i = 0
+
+    char** known_classes
+    unsigned int class_count = 0
+
+    void init(Token** tokens_, unsigned int max) {
+        tokens = tokens_
+        max_tokens = max
+        known_classes = malloc(sizeof(char*) * 100)
+    }
+
+    Token* peek(int offset) {
+        if i + offset >= max_tokens then return tokens[max_tokens - 1] end
+        return tokens[i + offset]
+    }
+
+    Token* advance() {
+        Token* t = peek(0)
+        if t.type() != TOKEN_EOF then i = i + 1 end
+        return t
+    }
+
+    Token* expect(TokenType expected) {
+        Token* t = advance()
+        if t.type() != expected then
+            printf("error: expected %d, got %d (%s) at position %d\n", expected, t.type(), t.value(), i)
+            exit(1)
+        end
+        return t
+    }
+
+    void add_class(char* name) {
+        known_classes[class_count] = strdup(name)
+        class_count = class_count + 1
+    }
+
+    bool is_class_type(char* name) {
+        for int j = 0; j < class_count; j = j + 1 do
+            if strcmp(known_classes[j], name) == 0 then return true end
+        end
+        return false
+    }
+
+    bool is_cast() {
+        int offset = 0
+        int has_qualifier = 0
+
+        while peek(offset).type() == TOKEN_QUALIFIER do
+            has_qualifier = 1
+            offset = offset + 1
+        end
+
+        TokenType t = peek(offset).type()
+        if t != TOKEN_TYPE and t != TOKEN_ID then return 0 end
+
+        int is_known = 0
+        if t == TOKEN_TYPE then is_known = 1 end
+        if t == TOKEN_ID and is_class_type(peek(offset).value()) == true then is_known = 1 end
+
+        offset = offset + 1
+
+        int has_pointer = 0
+        while peek(offset).type() == TOKEN_ASTERISK do
+            has_pointer = 1
+            offset = offset + 1
+        end
+
+        if peek(offset).type() == TOKEN_RPAREN then
+            if is_known == 1 or has_pointer == 1 or has_qualifier == 1 then
+                return true
+            end
+
+            TokenType after = peek(offset + 1).type()
+            if after == TOKEN_LBRACE
+            or after == TOKEN_ID
+            or after == TOKEN_NUMBER
+            or after == TOKEN_STRING
+            or after == TOKEN_CHAR
+            or after == TOKEN_BOOL
+            or after == TOKEN_LPAREN
+            or after == TOKEN_AMPERSAND
+            or after == TOKEN_ASTERISK
+            or after == TOKEN_BIT_NOT
+            or after == TOKEN_MINUS
+            or after == TOKEN_PLUS
+            or after == TOKEN_INC
+            or after == TOKEN_DEC
+            or after == TOKEN_SIZEOF then
+                return true
+            end
+        end
+
+        return false
+    }
+
+    int get_precedence(TokenType type) {
+        switch type
+            case TOKEN_OR: return 1
+            case TOKEN_AND: return 2
+
+            case TOKEN_BIT_OR: return 3
+            case TOKEN_BIT_XOR: return 4
+            case TOKEN_AMPERSAND: return 5
+
+            case TOKEN_EQ:
+            case TOKEN_NEQ:
+            case TOKEN_TYPE_EQ:
+                return 6
+
+            case TOKEN_LT:
+            case TOKEN_GT:
+            case TOKEN_LEQ:
+            case TOKEN_GEQ:
+                return 7
+
+            case TOKEN_BITSHIFT_LEFT:
+            case TOKEN_BITSHIFT_RIGHT:
+                return 8
+
+            case TOKEN_PLUS:
+            case TOKEN_MINUS:
+                return 9
+
+            case TOKEN_ASTERISK:
+            case TOKEN_DIV:
+            case TOKEN_MOD:
+                return 10
+
+            case TOKEN_DOT:
+            case TOKEN_LBRACKET:
+                return 11
+
+            else: return 0
+        end
+    }
+
+    Node* parse_unary() {
+        Token* t = peek(0)
+
+        if t.type() == TOKEN_SIZEOF then
+            advance()
+            Node* node = Node(NODE_SIZEOF)
+            
+            int has_paren = 0
+            if peek(0).type() == TOKEN_LPAREN then
+                advance()
+                has_paren = 1
+            end
+
+            if is_type_start() then
+                char* t_name = parse_type()
+                Node* type_node = Node(NODE_VAR)
+                type_node.value(t_name)
+                node.left(type_node)
+            else
+                node.left(parse_expr())
+            end
+
+            if has_paren then
+                expect(TOKEN_RPAREN)
+            end
+
+            return node
+        end
+
+        if t.type() == TOKEN_MINUS or t.type() == TOKEN_BIT_NOT or 
+        t.type() == TOKEN_ASTERISK or t.type() == TOKEN_AMPERSAND or 
+        t.type() == TOKEN_INC or t.type() == TOKEN_DEC then
+            
+            Token* op = advance()
+            Node* node = Node(NODE_UNARY_EXPR)
+            node.value(op.value())
+            node.left(parse_unary())
+            return node
+        end
+
+        return parse_primary()
+    }
+
+    Node* parse_primary() {
+        Token* t = peek(0)
+        Node* expr = NULL
+
+        switch t.type()
+            case TOKEN_NUMBER:
+                advance()
+                expr = Node(NODE_NUMBER)
+                expr.value(t.value())
+                break
+
+            case TOKEN_STRING:
+                advance()
+                expr = Node(NODE_STRING_LIT)
+                expr.value(t.value())
+                break
+
+            case TOKEN_CHAR:
+                advance()
+                expr = Node(NODE_CHAR_LIT)
+                expr.value(t.value())
+                break
+
+            case TOKEN_BOOL:
+                advance()
+                expr = Node(NODE_BOOL_LIT)
+                expr.value(t.value())
+                break
+
+            case TOKEN_ID:
+                advance()
+                expr = Node(NODE_VAR)
+                expr.value(t.value())
+                break
+
+            case TOKEN_LBRACE:
+                advance()
+                expr = Node(NODE_COMPOUND_LITERAL)
+                while peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_EOF do
+                    expr.add_child(parse_expr())
+                    if peek(0).type() == TOKEN_COMMA then advance() end
+                end
+                expect(TOKEN_RBRACE)
+                break
+
+            case TOKEN_LPAREN:
+                advance()
+                if is_cast() == true then
+                    char* cast_type = parse_type()
+                    expect(TOKEN_RPAREN)
+                    
+                    Node* cast_node = Node(NODE_CAST)
+                    cast_node.data_type(cast_type)
+                    cast_node.left(parse_unary())
+                    expr = cast_node
+                else
+                    Node* inner_expr = parse_expr_prec(0)
+                    expect(TOKEN_RPAREN)
+
+                    expr = Node(NODE_PAREN)
+                    expr.left(inner_expr)
+                end
+                break
+
+            else:
+                printf("error: unexpected token at position %d in expression: %s\n", i, t.value())
+                exit(1)
+        end
+
+        while 1 do
+            if peek(0).type() == TOKEN_LPAREN then
+                advance()
+
+                Node* call_node = NULL
+
+                if expr != NULL and expr.type() == NODE_VAR and is_class_type(expr.value()) then
+                    call_node = Node(NODE_CONSTRUCTOR_CALL)
+                    call_node.value(expr.value())
+                else
+                    call_node = Node(NODE_FUNC_CALL)
+                    call_node.left(expr)
+                end
+
+                while peek(0).type() != TOKEN_RPAREN and peek(0).type() != TOKEN_EOF do
+                    call_node.add_child(parse_expr())
+                    if peek(0).type() == TOKEN_COMMA then advance() end
+                end
+
+                expect(TOKEN_RPAREN)
+                expr = call_node
+
+            elif peek(0).type() == TOKEN_LBRACKET then
+                advance()
+                Node* arr_node = Node(NODE_ARRAY_ACCESS)
+                arr_node.left(expr)
+                arr_node.right(parse_expr())
+                expect(TOKEN_RBRACKET)
+                expr = arr_node
+
+            elif peek(0).type() == TOKEN_DOT then
+                advance()
+                Token* member = expect(TOKEN_ID)
+                Node* chain_node = Node(NODE_CHAIN_ACCESS)
+                chain_node.left(expr)
+                
+                Node* member_node = Node(NODE_VAR)
+                member_node.value(member.value())
+                chain_node.right(member_node)
+                
+                expr = chain_node
+            elif peek(0).type() == TOKEN_INC or peek(0).type() == TOKEN_DEC then
+                if expr != NULL and expr.type() != NODE_NUMBER and expr.type() != NODE_STRING_LIT then
+                    Token* op = advance()
+                    Node* post_node = Node(NODE_UNARY_EXPR)
+
+                    char* post_val = malloc(32)
+                    sprintf(post_val, "%s_post", op.value())
+
+                    post_node.value(post_val) 
+                    post_node.left(expr)
+                    expr = post_node
+                else
+                    break
+                end
+            else
+                break
+            end
+        end
+
+        return expr
+    }
+
+    Node* parse_expr_prec(int min_prec) {
+        Node* left = parse_unary()
+
+        while 1 do
+            TokenType op_type = peek(0).type()
+            int prec = get_precedence(op_type)
+
+            if prec < min_prec or prec == 0 then
+                break
+            end
+
+            if op_type == TOKEN_ASTERISK then
+                if peek(1).type() == TOKEN_ID and is_assign_op(peek(2).type()) then
+                    break
+                end
+            end
+
+            Token* op_token = advance()
+
+            Node* right = parse_expr_prec(prec + 1)
+
+            Node* binary_node = Node(NODE_BINARY_EXPR)
+            binary_node.value(op_token.value())
+            binary_node.left(left)
+            binary_node.right(right)
+
+            left = binary_node
+        end
+
+        return left
+    }
+
+    Node* parse_expr() {
+        return parse_expr_prec(0)
+    }
+
+    bool is_type_start() {
+        TokenType t = peek(0).type()
+        if t == TOKEN_TYPE or t == TOKEN_QUALIFIER then return true end
+
+        if t == TOKEN_ID then
+            if is_class_type(peek(0).value()) or peek(1).type() == TOKEN_ID or peek(1).type() == TOKEN_ASTERISK then
+                return true
+            end
+        end
+        
+        return false
+    }
+
+    bool is_assign_op(TokenType type) {
+        switch type
+            case TOKEN_ASSIGN:
+            case TOKEN_PLUS_ASSIGN:
+            case TOKEN_MINUS_ASSIGN:
+            case TOKEN_MUL_ASSIGN:
+            case TOKEN_DIV_ASSIGN:
+            case TOKEN_MOD_ASSIGN:
+            case TOKEN_BIT_AND_ASSIGN:
+            case TOKEN_BIT_OR_ASSIGN:
+            case TOKEN_BIT_XOR_ASSIGN:
+            case TOKEN_LSHIFT_ASSIGN:
+            case TOKEN_RSHIFT_ASSIGN:
+                return true
+            else:
+                return false
+        end
+    }
+
+    Node* parse_statement() {
+        switch peek(0).type()
+            case TOKEN_IF: return parse_if()
+            case TOKEN_WHILE: return parse_while()
+            case TOKEN_FOR: return parse_for()
+            case TOKEN_SWITCH: return parse_switch()
+            case TOKEN_RETURN: return parse_return()
+            case TOKEN_BREAK:
+                advance()
+                Node* n = Node(NODE_BREAK)
+                return n
+            case TOKEN_CONTINUE:
+                advance()
+                Node* n = Node(NODE_CONTINUE)
+                return n
+            else:
+                if is_type_start() then
+                    return parse_declaration()
+                end
+
+                if peek(0).type() == TOKEN_ASTERISK then
+                    Node* lhs = parse_unary()
+                    if is_assign_op(peek(0).type()) then
+                        Token* op = advance()
+                        Node* assign_node = Node(NODE_ASSIGN)
+                        assign_node.value(op.value())
+                        assign_node.left(lhs)
+                        assign_node.right(parse_expr())
+                        return assign_node
+                    end
+                    return lhs
+                end
+
+                Node* expr = parse_expr()
+
+                if is_assign_op(peek(0).type()) then
+                    Token* op = advance()
+                    Node* assign_node = Node(NODE_ASSIGN)
+                    assign_node.value(op.value()) 
+                    assign_node.left(expr)
+                    assign_node.right(parse_expr())
+                    return assign_node
+                end
+
+                return expr
+        end
+    }
+
+    Node* parse_declaration() {
+        char* var_type = parse_type()
+        Token* var_name = expect(TOKEN_ID)
+
+        if peek(0).type() == TOKEN_LBRACKET then
+            advance()
+            Node* decl_node = Node(NODE_DECLARE_ARRAY)
+            decl_node.value(var_name.value())
+            decl_node.data_type(var_type)
+
+            decl_node.add_child(parse_expr()) 
+            expect(TOKEN_RBRACKET)
+
+            if peek(0).type() == TOKEN_ASSIGN then
+                advance()
+                decl_node.add_child(parse_expr())
+            end
+
+            return decl_node
+        end
+
+        if peek(0).type() == TOKEN_ASSIGN then
+            advance()
+            Node* decl_node = Node(NODE_DECLARE_ASSIGN)
+            decl_node.value(var_name.value())
+            decl_node.data_type(var_type)
+            decl_node.left(parse_expr())
+            return decl_node
+        end
+
+        Node* decl_node = Node(NODE_DECLARE)
+        decl_node.value(var_name.value())
+        decl_node.data_type(var_type)
+        return decl_node
+    }
+
+    Node* parse_return() {
+        expect(TOKEN_RETURN)
+        Node* ret_node = Node(NODE_RETURN_STMT)
+
+        if peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_END then
+            ret_node.left(parse_expr())
+        end
+
+        return ret_node
+    }
+
+    Node* parse_if() {
+        expect(TOKEN_IF)
+        Node* if_node = Node(NODE_IF_STMT)
+
+        if_node.add_child(parse_expr())
+        expect(TOKEN_THEN)
+
+        while peek(0).type() != TOKEN_END 
+          and peek(0).type() != TOKEN_ELSE 
+          and peek(0).type() != TOKEN_ELIF 
+          and peek(0).type() != TOKEN_EOF do
+            if_node.add_child(parse_statement())
+        end
+
+        while peek(0).type() == TOKEN_ELIF do
+            advance()
+            Node* elif_node = Node(NODE_ELIF_STMT)
+
+            elif_node.add_child(parse_expr())
+            expect(TOKEN_THEN)
+
+            while peek(0).type() != TOKEN_END 
+              and peek(0).type() != TOKEN_ELSE 
+              and peek(0).type() != TOKEN_ELIF 
+              and peek(0).type() != TOKEN_EOF do
+                elif_node.add_child(parse_statement())
+            end
+
+            if_node.add_child(elif_node)
+        end
+
+        if peek(0).type() == TOKEN_ELSE then
+            advance()
+            Node* else_node = Node(NODE_ELSE_STMT)
+
+            while peek(0).type() != TOKEN_END 
+              and peek(0).type() != TOKEN_EOF do
+                else_node.add_child(parse_statement())
+            end
+
+            if_node.add_child(else_node)
+        end
+
+        expect(TOKEN_END)
+        return if_node
+    }
+
+    Node* parse_while() {
+        expect(TOKEN_WHILE)
+        Node* while_node = Node(NODE_WHILE_STMT)
+
+        while_node.add_child(parse_expr())
+
+        expect(TOKEN_DO)
+
+        while peek(0).type() != TOKEN_END and peek(0).type() != TOKEN_EOF do
+            while_node.add_child(parse_statement())
+        end
+
+        expect(TOKEN_END)
+        return while_node
+    }
+
+    Node* parse_for() {
+        expect(TOKEN_FOR)
+        Node* for_node = Node(NODE_FOR_STMT)
+
+        for_node.add_child(parse_statement())
+        expect(TOKEN_SEMICOLON)
+
+        for_node.add_child(parse_expr())
+        expect(TOKEN_SEMICOLON)
+
+        for_node.add_child(parse_statement())
+
+        if peek(0).type() == TOKEN_DO then advance() end
+
+        while peek(0).type() != TOKEN_END and peek(0).type() != TOKEN_EOF do
+            for_node.add_child(parse_statement())
+        end
+
+        expect(TOKEN_END)
+        return for_node
+    }
+
+    Node* parse_switch() {
+        expect(TOKEN_SWITCH)
+        Node* switch_node = Node(NODE_SWITCH_STMT)
+
+        switch_node.add_child(parse_expr())
+
+        while peek(0).type() != TOKEN_END and peek(0).type() != TOKEN_EOF do
+            if peek(0).type() == TOKEN_CASE then
+                advance()
+                Node* case_node = Node(NODE_CASE)
+
+                case_node.add_child(parse_expr())
+                expect(TOKEN_COLON)
+
+                while peek(0).type() != TOKEN_CASE 
+                  and peek(0).type() != TOKEN_ELSE 
+                  and peek(0).type() != TOKEN_END 
+                  and peek(0).type() != TOKEN_EOF do
+                    case_node.add_child(parse_statement())
+                end
+
+                switch_node.add_child(case_node)
+
+            elif peek(0).type() == TOKEN_ELSE then
+                advance()
+                expect(TOKEN_COLON)
+                Node* default_node = Node(NODE_ELSE_SWITCH)
+
+                while peek(0).type() != TOKEN_END and peek(0).type() != TOKEN_EOF do
+                    default_node.add_child(parse_statement())
+                end
+
+                switch_node.add_child(default_node)
+            else
+                advance()
+            end
+        end
+
+        expect(TOKEN_END)
+        return switch_node
+    }
+
+    char* parse_type() {
+        char* full_type = malloc(256)
+        full_type[0] = '\0'
+
+        while peek(0).type() == TOKEN_QUALIFIER do
+            Token* q = advance()
+            strcat(full_type, q.value())
+            strcat(full_type, " ")
+        end
+
+        if peek(0).type() == TOKEN_TYPE or peek(0).type() == TOKEN_ID then
+            Token* t = advance()
+            strcat(full_type, t.value())
+        end
+
+        while peek(0).type() == TOKEN_ASTERISK do
+            advance()
+            strcat(full_type, "*")
+        end
+
+        return full_type
+    }
+
+    Node* parse_params() {
+        Node* params_node = Node(NODE_PARAM)
+
+        while peek(0).type() != TOKEN_RPAREN and peek(0).type() != TOKEN_EOF do
+            char* p_type = parse_type()
+            Token* p_name = expect(TOKEN_ID)
+
+            Node* param = Node(NODE_PARAM)
+            param.value(p_name.value())
+            param.data_type(p_type)
+
+            params_node.add_child(param)
+
+            if peek(0).type() == TOKEN_COMMA then advance() end
+        end
+
+        return params_node
+    }
+
+    Node* parse_class_member() {
+        if peek(0).type() == TOKEN_BIND then
+            advance()
+            Node* bind_node = Node(NODE_BIND)
+            
+            while true do
+                Token* iface = expect(TOKEN_ID)
+                Node* iface_ref = Node(NODE_VAR)
+                iface_ref.value(iface.value())
+                bind_node.add_child(iface_ref)
+                
+                if peek(0).type() == TOKEN_COMMA then advance()
+                else break end
+            end
+            return bind_node
+        end
+
+        char* member_type = parse_type()
+        Token* name = expect(TOKEN_ID)
+
+        if peek(0).type() == TOKEN_LPAREN then
+            Node* method_node = Node(NODE_METHOD_DEF)
+            method_node.value(name.value())
+            method_node.data_type(member_type)
+
+            expect(TOKEN_LPAREN)
+            method_node.add_child(parse_params())
+            expect(TOKEN_RPAREN)
+            expect(TOKEN_LBRACE)
+
+            while peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_EOF do
+                method_node.add_child(parse_statement())
+            end
+
+            expect(TOKEN_RBRACE)
+            return method_node
+        elif peek(0).type() == TOKEN_LBRACKET then
+            advance()
+            Node* field_node = Node(NODE_DECLARE_ARRAY)
+            field_node.value(name.value())
+            field_node.data_type(member_type)
+
+            field_node.add_child(parse_expr()) 
+            expect(TOKEN_RBRACKET)
+
+            if peek(0).type() == TOKEN_ASSIGN then
+                advance()
+                field_node.add_child(parse_expr())
+            end
+
+            return field_node
+        else
+            if peek(0).type() == TOKEN_ASSIGN then
+                advance()
+
+                Node* field_node = Node(NODE_FIELD_DEF_ASSIGN)
+                field_node.value(name.value())
+                field_node.data_type(member_type)
+
+                field_node.add_child(parse_expr()) 
+                return field_node
+            end
+
+            Node* field_node = Node(NODE_FIELD_DEF)
+            field_node.value(name.value())
+            field_node.data_type(member_type)
+            return field_node
+        end
+    }
+
+    Node* parse_class() {
+        expect(TOKEN_CLASS)
+        Token* name = expect(TOKEN_ID)
+
+        add_class(name.value())
+
+        Node* class_node = Node(NODE_CLASS_DEF)
+        class_node.value(name.value())
+
+        expect(TOKEN_LBRACE)
+
+        while peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_EOF do
+            class_node.add_child(parse_class_member())
+        end
+
+        expect(TOKEN_RBRACE)
+        return class_node
+    }
+
+    Node* parse_include() {
+        expect(TOKEN_INCLUDE)
+        Token* path = expect(TOKEN_STRING)
+        
+        Node* node = Node(NODE_INCLUDE)
+        node.value(path.value())
+        return node
+    }
+
+    Node* parse_import() {
+        expect(TOKEN_IMPORT)
+        Token* path = expect(TOKEN_STRING)
+        
+        Node* node = Node(NODE_IMPORT)
+        node.value(path.value())
+        return node
+    }
+
+    Node* parse_guard() {
+        expect(TOKEN_GUARD)
+        Token* guard_id = expect(TOKEN_ID)
+        
+        Node* node = Node(NODE_GUARD)
+        node.value(guard_id.value())
+        return node
+    }
+
+    Node* parse_define() {
+        expect(TOKEN_DEFINE)
+        Token* id = expect(TOKEN_ID)
+
+        Node* node = Node(NODE_DEFINE)
+        node.value(id.value())
+
+        if peek(0).type() != TOKEN_EOF then
+            Node* expr = parse_expr()
+            node.add_child(expr)
+        end
+
+        return node
+    }
+
+    Node* parse_extern_func() {
+        expect(TOKEN_EXTERN)
+
+        Token* lang = expect(TOKEN_STRING) 
+
+        char* return_type = parse_type()
+        Token* name = expect(TOKEN_ID)
+        
+        Node* extern_node = Node(NODE_EXTERN_FUNC)
+        extern_node.value(name.value())
+        extern_node.data_type(return_type)
+        Node* string_lit_node = Node(NODE_STRING_LIT)
+        extern_node.extra(string_lit_node)
+        Node* extern_node_extra = extern_node.extra()
+        extern_node_extra.value(lang.value())
+
+        expect(TOKEN_LPAREN)
+        extern_node.add_child(parse_params())
+        expect(TOKEN_RPAREN)
+
+        expect(TOKEN_LBRACE)
+        while peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_EOF do
+            extern_node.add_child(parse_statement())
+        end
+        expect(TOKEN_RBRACE)
+
+        return extern_node
+    }
+
+    Node* parse_enum() {
+        expect(TOKEN_ENUM)
+        Token* enum_name = expect(TOKEN_ID)
+
+        Node* enum_node = Node(NODE_ENUM_DEF)
+        enum_node.value(enum_name.value())
+
+        expect(TOKEN_LBRACE)
+
+        while peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_EOF do
+            Token* member = expect(TOKEN_ID)
+
+            Node* member_node = Node(NODE_ENUM_MEMBER)
+            member_node.value(member.value())
+
+            if peek(0).type() == TOKEN_ASSIGN then
+                advance()
+                member_node.left(parse_expr())
+            end
+
+            enum_node.add_child(member_node)
+
+            if peek(0).type() == TOKEN_COMMA then 
+                advance() 
+            end
+        end
+
+        expect(TOKEN_RBRACE)
+        return enum_node
+    }
+
+    Node* parse_interface_method_decl() {
+        char* return_type = parse_type()
+        Token* name = expect(TOKEN_ID)
+        Node* method = Node(NODE_INTERFACE_METHOD_DECL)
+        method.value(name.value())
+        method.data_type(return_type)
+
+        expect(TOKEN_LPAREN)
+        Node* param_node = Node(NODE_PARAM)
+        while peek(0).type() != TOKEN_RPAREN and peek(0).type() != TOKEN_EOF do
+            Node* p = Node(NODE_VAR)
+            p.data_type(parse_type())
+            p.value(expect(TOKEN_ID).value())
+            param_node.add_child(p)
+            if peek(0).type() == TOKEN_COMMA then advance() end
+        end
+        expect(TOKEN_RPAREN)
+
+        method.add_child(param_node)
+        return method
+    }
+
+    Node* parse_interface() {
+        expect(TOKEN_INTERFACE)
+        Token* name = expect(TOKEN_ID)
+        add_class(name.value())ß
+
+        Node* iface_node = Node(NODE_INTERFACE_DEF)
+        iface_node.value(name.value())
+
+        expect(TOKEN_LBRACE)
+        while peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_EOF do
+            iface_node.add_child(parse_interface_method_decl())
+        end
+        expect(TOKEN_RBRACE)
+        return iface_node
+    }
+
+    Node* parse() {
+        Node* root = Node(NODE_PROGRAM)
+
+        while peek(0).type() != TOKEN_EOF do
+            switch peek(0).type()
+                case TOKEN_INCLUDE:
+                    root.add_child(parse_include())
+                    break
+                case TOKEN_IMPORT:
+                    root.add_child(parse_import())
+                    break
+                case TOKEN_GUARD:
+                    root.add_child(parse_guard())
+                    break
+                case TOKEN_DEFINE:
+                    root.add_child(parse_define())
+                    break
+                case TOKEN_EXTERN:
+                    root.add_child(parse_extern_func())
+                    break
+                case TOKEN_ENUM:
+                    root.add_child(parse_enum())
+                    break
+                case TOKEN_CLASS:
+                    root.add_child(parse_class())
+                    break
+                case TOKEN_TYPE:
+                    root.add_child(parse_declaration())
+                    break
+                case TOKEN_INTERFACE:
+                    root.add_child(parse_interface())
+                    break
+                else:
+                    advance()
+                    break
+            end
+        end
+
+        return root
+    }
+}

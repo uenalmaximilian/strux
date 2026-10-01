@@ -1,0 +1,430 @@
+include "string.h"
+include "stdio.h"
+include "stdlib.h"
+include "ctype.h"
+import "token.strx"
+
+class Lexer {
+    char* source
+    char current_char
+    unsigned int i = 0
+
+    void init(char* source_) {
+        source = source_
+        current_char = source[i]
+    }
+
+    void advance() {
+        if current_char != '\0' and i < strlen(source) then
+            i = i + 1
+            current_char = source[i]
+        end
+    }
+
+    void skip_whitespace() {
+        while current_char == ' ' or current_char == '\n' do
+            advance()
+        end
+    }
+
+    char* get_current_char_as_string() {
+        char* s = calloc(2, 1)
+        s[0] = current_char
+        s[1] = '\0'
+        return s
+    }
+
+    Token* advance_with_token(Token* token) {
+        advance()
+        return token
+    }
+
+    Token* collect_string() {
+        advance()
+
+        size_t capacity = 16
+        size_t length = 0
+        char* value = malloc(capacity)
+
+        while current_char != '"' and current_char != '\0' do
+            if length + 2 >= capacity then
+                capacity *= 2
+                value = realloc(value, capacity)
+            end
+
+            if current_char == '\\' then
+                value[length] = '\\'
+                length++
+                advance()
+
+                if current_char != '\0' then
+                    value[length] = current_char
+                    length++
+                    advance()
+                end
+
+                continue
+            end
+
+            value[length] = current_char
+            length++
+            advance()
+        end
+
+        value[length] = '\0'
+
+        Token* t = Token(TOKEN_STRING, value)
+        if current_char == '"' then 
+            advance()
+        else 
+            t = Token(TOKEN_EOF, "")
+        end
+
+        return t
+    }
+
+    Token* collect_char() {
+        advance()
+
+        char* value = calloc(8, sizeof(char))
+        int val_idx = 0
+
+        if current_char == '\\' then
+            value[val_idx] = current_char
+            val_idx = val_idx + 1
+            advance()
+        end
+
+        value[val_idx] = current_char
+        val_idx = val_idx + 1
+        advance()
+
+        if current_char == '\'' then
+            advance()
+        end
+
+        value[val_idx] = '\0'
+
+        Token* t = Token(TOKEN_CHAR, value)
+        return t
+    }
+
+    TokenType get_id_type(char* value) {
+        if strcmp(value, "sizeof") == 0 then return TOKEN_SIZEOF
+        elif strcmp(value, "<<") == 0 then return TOKEN_BITSHIFT_LEFT
+        elif strcmp(value, ">>") == 0 then return TOKEN_BITSHIFT_RIGHT
+
+        elif strcmp(value, "===") == 0 then return TOKEN_TYPE_EQ
+        elif strcmp(value, "==") == 0 then return TOKEN_EQ
+        elif strcmp(value, "!=") == 0 then return TOKEN_NEQ
+        elif strcmp(value, "<") == 0 then return TOKEN_LT
+        elif strcmp(value, ">") == 0 then return TOKEN_GT
+        elif strcmp(value, "<=") == 0 then return TOKEN_LEQ
+        elif strcmp(value, ">=") == 0 then return TOKEN_GEQ
+        elif strcmp(value, "and") == 0
+             or strcmp(value, "&&") == 0
+             then return TOKEN_AND
+        elif strcmp(value, "or") == 0
+             or strcmp(value, "||") == 0
+             then return TOKEN_OR
+
+        elif strcmp(value, "&") == 0 then return TOKEN_AMPERSAND
+        elif strcmp(value, "|") == 0 then return TOKEN_BIT_OR
+
+        elif strcmp(value, "+=") == 0 then return TOKEN_PLUS_ASSIGN
+        elif strcmp(value, "-=") == 0 then return TOKEN_MINUS_ASSIGN
+        elif strcmp(value, "*=") == 0 then return TOKEN_MUL_ASSIGN
+        elif strcmp(value, "/=") == 0 then return TOKEN_DIV_ASSIGN
+        elif strcmp(value, "%=") == 0 then return TOKEN_MOD_ASSIGN
+        elif strcmp(value, "&=") == 0 then return TOKEN_BIT_AND_ASSIGN
+        elif strcmp(value, "|=") == 0 then return TOKEN_BIT_OR_ASSIGN
+        elif strcmp(value, "^=") == 0 then return TOKEN_BIT_XOR_ASSIGN
+        elif strcmp(value, "<<=") == 0 then return TOKEN_LSHIFT_ASSIGN
+        elif strcmp(value, ">>=") == 0 then return TOKEN_RSHIFT_ASSIGN
+
+        elif strcmp(value, "if") == 0 then return TOKEN_IF
+        elif strcmp(value, "elif") == 0 then return TOKEN_ELIF
+        elif strcmp(value, "else") == 0 then return TOKEN_ELSE
+        elif strcmp(value, "then") == 0 then return TOKEN_THEN
+        elif strcmp(value, "switch") == 0 then return TOKEN_SWITCH
+        elif strcmp(value, "case") == 0 then return TOKEN_CASE
+        elif strcmp(value, "while") == 0 then return TOKEN_WHILE
+        elif strcmp(value, "for") == 0 then return TOKEN_FOR
+        elif strcmp(value, "do") == 0 then return TOKEN_DO
+        elif strcmp(value, "end") == 0 then return TOKEN_END
+        elif strcmp(value, "break") == 0 then return TOKEN_BREAK
+        elif strcmp(value, "continue") == 0 then return TOKEN_CONTINUE
+        elif strcmp(value, "return") == 0 then return TOKEN_RETURN
+
+        elif strcmp(value, "extern") == 0 then return TOKEN_EXTERN
+        elif strcmp(value, "enum") == 0 then return TOKEN_ENUM
+        elif strcmp(value, "class") == 0 then return TOKEN_CLASS
+        elif strcmp(value, "interface") == 0 then return TOKEN_INTERFACE
+        elif strcmp(value, "bind") == 0 then return TOKEN_BIND
+
+        elif strcmp(value, "include") == 0 then return TOKEN_INCLUDE
+        elif strcmp(value, "import") == 0 then return TOKEN_IMPORT
+        elif strcmp(value, "guard") == 0 then return TOKEN_GUARD
+        elif strcmp(value, "define") == 0 then return TOKEN_DEFINE
+
+        elif strcmp(value, "true") == 0
+             or strcmp(value, "false") == 0
+             then return TOKEN_BOOL
+
+        elif strcmp(value, "int") == 0
+             or strcmp(value, "short") == 0
+             or strcmp(value, "char") == 0
+             or strcmp(value, "float") == 0
+             or strcmp(value, "double") == 0
+             or strcmp(value, "bool") == 0
+             or strcmp(value, "void") == 0
+             then return TOKEN_TYPE
+        elif strcmp(value, "unsigned") == 0
+             or strcmp(value, "signed") == 0
+             or strcmp(value, "volatile") == 0
+             or strcmp(value, "const") == 0
+             or strcmp(value, "register") == 0
+             or strcmp(value, "static") == 0
+             then return TOKEN_QUALIFIER
+        end
+
+        return TOKEN_ID
+    }
+
+    bool is_id_char(char c) {
+        return isalnum(c) or c == '_'
+    }
+
+    Token* collect_id() {
+        char* value = calloc(1, sizeof(char))
+        value[0] = '\0'
+
+        while isalnum(current_char) or current_char == '_' do
+            char* s = get_current_char_as_string()
+            value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+            strcat(value, s)
+            advance()
+        end
+
+        Token* t = Token(get_id_type(value), value)
+        return t
+    }
+
+    Token* collect_number() {
+        char* value = calloc(1, sizeof(char))
+        value[0] = '\0'
+        bool is_float = false
+
+        while isdigit(current_char) or current_char == '.' do
+            if current_char == '.' then is_float = true end
+
+            char* s = get_current_char_as_string()
+            value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+            strcat(value, s)
+            advance()
+        end
+
+        if current_char == 'f' or current_char == 'F' then
+            is_float = true
+            char* s = get_current_char_as_string()
+            value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+            strcat(value, s)
+            advance()
+        end
+
+        Token* t = Token(TOKEN_NUMBER, value)
+        return t
+    }
+
+    Token* collect_operator() {
+        char* value = calloc(1, sizeof(char))
+        value[0] = '\0'
+
+        while current_char == '=' or current_char == '<' or current_char == '>' 
+           or current_char == '!' or current_char == '&' or current_char == '|' do
+            char* s = get_current_char_as_string()
+            value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+            strcat(value, s)
+            advance()
+        end
+
+        TokenType type = get_id_type(value)
+
+        if strcmp(value, "=") == 0 then
+            type = TOKEN_ASSIGN
+        end
+
+        Token* t = Token(type, value)
+        return t
+    }
+
+    char peek_char(int offset) {
+        if i + offset >= strlen(source) then return '\0' end
+        return source[i + offset]
+    }
+
+    void skip_single_line_comment() {
+        advance()
+        advance()
+        while current_char != '\n' and current_char != '\r' and current_char != '\0' do
+            advance()
+        end
+    }
+
+    void skip_multi_line_comment() {
+        advance()
+        advance()
+        while current_char != '\0' do
+            if current_char == '*' and peek_char(1) == '/' then
+                advance()
+                advance()
+                break
+            end
+            advance()
+        end
+    }
+
+    Token* get_next_token() {
+        while current_char != '\0' and i < strlen(source) do
+            if current_char == ' '
+               or current_char == '\n'
+               then skip_whitespace()
+            end
+
+            if isdigit(current_char) then return collect_number() end
+            if isalnum(current_char) then return collect_id() end
+
+            switch current_char
+                case '+':
+                    if peek_char(1) == '=' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_PLUS_ASSIGN, "+=")
+                        return t
+                    elif peek_char(1) == '+' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_INC, "++")
+                        return t
+                    end
+                    Token* t = Token(TOKEN_PLUS, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '-':
+                    if peek_char(1) == '=' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_MINUS_ASSIGN, "-=")
+                        return t
+                    elif peek_char(1) == '-' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_DEC, "--")
+                        return t
+                    end
+                    Token* t = Token(TOKEN_MINUS, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '*':
+                    if peek_char(1) == '=' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_MUL_ASSIGN, "*=")
+                        return t
+                    end
+                    Token* t = Token(TOKEN_ASTERISK, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '/':
+                    if peek_char(1) == '/' then
+                        skip_single_line_comment()
+                        break
+                    elif peek_char(1) == '*' then
+                        skip_multi_line_comment()
+                        break
+                    elif peek_char(1) == '=' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_DIV_ASSIGN, "/=")
+                        return t
+                    end
+                    Token* t = Token(TOKEN_DIV, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '%':
+                    if peek_char(1) == '=' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_MOD_ASSIGN, "%=")
+                        return t
+                    end
+                    Token* t = Token(TOKEN_MOD, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '^':
+                    if peek_char(1) == '=' then
+                        advance()
+                        advance()
+                        Token* t = Token(TOKEN_BIT_XOR_ASSIGN, "^=")
+                        return t
+                    end
+                    Token* t = Token(TOKEN_BIT_XOR, get_current_char_as_string())
+                    return advance_with_token(t)
+                case '~':
+                    Token* t = Token(TOKEN_BIT_NOT, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '=':
+                case '<':
+                case '>':
+                case '!':
+                case '&':
+                case '|':
+                    return collect_operator()
+
+                case '(':
+                    Token* t = Token(TOKEN_LPAREN, get_current_char_as_string())
+                    return advance_with_token(t)
+                case ')':
+                    Token* t = Token(TOKEN_RPAREN, get_current_char_as_string())
+                    return advance_with_token(t)
+                case '{':
+                    Token* t = Token(TOKEN_LBRACE, get_current_char_as_string())
+                    return advance_with_token(t)
+                case '}':
+                    Token* t = Token(TOKEN_RBRACE, get_current_char_as_string())
+                    return advance_with_token(t)
+                case '[':
+                    Token* t = Token(TOKEN_LBRACKET, get_current_char_as_string())
+                    return advance_with_token(t)
+                case ']':
+                    Token* t = Token(TOKEN_RBRACKET, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '.':
+                    Token* t = Token(TOKEN_DOT, get_current_char_as_string())
+                    return advance_with_token(t)
+                case ',':
+                    Token* t = Token(TOKEN_COMMA, get_current_char_as_string())
+                    return advance_with_token(t)
+                case ':':
+                    Token* t = Token(TOKEN_COLON, get_current_char_as_string())
+                    return advance_with_token(t)
+                case ';':
+                    Token* t = Token(TOKEN_SEMICOLON, get_current_char_as_string())
+                    return advance_with_token(t)
+
+                case '\'':
+                    return collect_char()
+                case '"':
+                    return collect_string()
+
+                else:
+                    advance()
+                    break
+            end
+        end
+
+        return NULL
+    }
+}

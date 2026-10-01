@@ -1,0 +1,1279 @@
+include "string.h"
+include "stdio.h"
+include "stdlib.h"
+import "token.strx"
+import "node.strx"
+import "lexer.strx"
+import "parser.strx"
+
+class Generator {
+    char* forward_structs_buf
+    char* forward_methods_buf
+    char* struct_buf
+    char* body_buf
+    char* footer_buf
+    char* output_buf
+    bool is_guard = false
+    char** imported = NULL
+    int next_imported = 0
+    char* source_file_name = NULL
+    char* current_class = NULL
+    Node* current_ast = NULL
+    char* current_target_var = NULL
+    Node* current_method = NULL
+
+    void init() {
+        forward_structs_buf = malloc(1024 * 1024)
+        forward_structs_buf[0] = '\0'
+
+        forward_methods_buf = malloc(1024 * 1024)
+        forward_methods_buf[0] = '\0'
+
+        struct_buf = malloc(2 * 1024 * 1024)
+        struct_buf[0] = '\0'
+
+        body_buf = malloc(8 * 1024 * 1024)
+        body_buf[0] = '\0'
+
+        footer_buf = malloc(1024)
+        footer_buf[0] = '\0'
+
+        output_buf = malloc(16 * 1024 * 1024)
+        output_buf[0] = '\0'
+
+        imported = calloc(64, sizeof(char*))
+
+        strcat(output_buf, "#include <stdlib.h>\n")
+    }
+
+    char* get_data_type(Node* node) {
+        if strcmp("bool", node.data_type()) == 0 then return "_Bool"
+        else return node.data_type() end
+    }
+
+    char* get_param_type(Node* method_node, char* var_name) {
+        if method_node == NULL or var_name == NULL then return NULL end
+
+        Node** children = method_node.children()
+        for int i = 0; i < method_node.child_count(); i = i + 1 do
+            Node* child = children[i]
+            if child != NULL and child.type() == NODE_PARAM then
+                Node** params = child.children()
+                for int j = 0; j < child.child_count(); j = j + 1 do
+                    Node* param = params[j]
+                    if param != NULL and param.value() != NULL and strcmp(param.value(), var_name) == 0 then
+                        return get_data_type(param)
+                    end
+                end
+            end
+        end
+        return NULL
+    }
+
+    char* get_var_type(Node* node, char* var_name) {
+        if node == NULL or var_name == NULL then return NULL end
+
+        if node.type() == NODE_METHOD_DEF then
+            char* param_type = get_param_type(node, var_name)
+            if param_type != NULL then return param_type end
+        end
+
+        int t = node.type()
+        if t == NODE_DECLARE or t == NODE_DECLARE_ASSIGN then
+            if node.value() != NULL and strcmp(node.value(), var_name) == 0 then 
+                return get_data_type(node)
+            end
+        end
+
+        Node** children = node.children()
+        if children != NULL then
+            for int i = 0; i < node.child_count(); i = i + 1 do
+                if children[i] != NULL then
+                    char* found_type = get_var_type(children[i], var_name)
+                    if found_type != NULL then return found_type end
+                end
+            end
+        end
+
+        if node.left() != NULL then
+            char* found_type = get_var_type(node.left(), var_name)
+            if found_type != NULL then return found_type end
+        end
+
+        if node.right() != NULL then
+            char* found_type = get_var_type(node.right(), var_name)
+            if found_type != NULL then return found_type end
+        end
+
+        return NULL
+    }
+
+    bool is_method_in_class(Node* ast, char* class_name, char* method_name) {
+        if ast == NULL
+        or class_name == NULL
+        or method_name == NULL then
+            return false end
+
+        Node** children = ast.children()
+        for int i = 0; i < ast.child_count(); i = i + 1 do
+            Node* child = children[i]
+            if child != NULL
+            and child.type() == NODE_CLASS_DEF
+            and strcmp(child.value(), class_name) == 0 then
+                Node** class_children = child.children()
+                for int j = 0; j < child.child_count(); j = j + 1 do
+                    Node* m = class_children[j]
+                    if m != NULL
+                    and m.type() == NODE_METHOD_DEF
+                    and strcmp(m.value(), method_name) == 0 then
+                        return true end
+                end
+            end
+        end
+        return false
+    }
+
+    bool is_class_field(Node* ast, char* class_name, char* var_name) {
+        if ast == NULL
+        or class_name == NULL
+        or var_name == NULL then
+            return false end
+
+        Node** children = ast.children()
+        for int i = 0; i < ast.child_count(); i = i + 1 do
+            Node* child = children[i]
+            if child != NULL and child.type() == NODE_CLASS_DEF and strcmp(child.value(), class_name) == 0 then
+                Node** class_children = child.children()
+                for int j = 0; j < child.child_count(); j = j + 1 do
+                    Node* m = class_children[j]
+                    if m != NULL and (m.type() == NODE_FIELD_DEF or m.type() == NODE_FIELD_DEF_ASSIGN) then
+                        if strcmp(m.value(), var_name) == 0 then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    }
+
+    char* get_field_type(Node* ast, char* class_name, char* var_name) {
+        if ast == NULL or class_name == NULL or var_name == NULL then return NULL end
+        Node** children = ast.children()
+        for int i = 0; i < ast.child_count(); i = i + 1 do
+            Node* child = children[i]
+            if child != NULL and child.type() == NODE_CLASS_DEF and strcmp(child.value(), class_name) == 0 then
+                Node** class_children = child.children()
+                for int j = 0; j < child.child_count(); j = j + 1 do
+                    Node* m = class_children[j]
+                    if m != NULL and (m.type() == NODE_FIELD_DEF or m.type() == NODE_FIELD_DEF_ASSIGN) then
+                        if strcmp(m.value(), var_name) == 0 then
+                            return get_data_type(m)
+                        end
+                    end
+                end
+            end
+        end
+        return NULL
+    }
+
+    char* get_node_return_type(Node* ast, Node* current_method_node, char* current_class_name, Node* expr) {
+        if expr == NULL then return "void" end
+
+        if expr.type() == NODE_VAR then
+            char* t = NULL
+            if current_method_node != NULL then
+                t = get_var_type(current_method_node, expr.value())
+            end
+            if t == NULL and current_class_name != NULL then
+                t = get_field_type(ast, current_class_name, expr.value())
+            end
+            if t != NULL then return t end
+        end
+
+        if expr.type() == NODE_FUNC_CALL then
+            Node* func_var = expr.left()
+            if func_var == NULL then return "void" end
+
+            if func_var.type() == NODE_VAR then
+                char* func_name = func_var.value()
+
+                Node** children = ast.children()
+                for int i = 0; i < ast.child_count(); i = i + 1 do
+                    Node* child = children[i]
+                    if child != NULL then
+                        if (child.type() == NODE_EXTERN_FUNC or child.type() == NODE_METHOD_DEF) and strcmp(child.value(), func_name) == 0 then
+                            return get_data_type(child)
+                        end
+
+                        if child.type() == NODE_CLASS_DEF then
+                            Node** class_children = child.children()
+                            for int j = 0; j < child.child_count(); j = j + 1 do
+                                Node* m = class_children[j]
+                                if m != NULL and m.type() == NODE_METHOD_DEF and strcmp(m.value(), func_name) == 0 then
+                                    return get_data_type(m)
+                                end
+                            end
+                        end
+                    end
+                end
+            elif func_var.type() == NODE_CHAIN_ACCESS then
+                return get_node_return_type(ast, current_method_node, current_class_name, func_var)
+            end
+        end
+
+        if expr.type() == NODE_CHAIN_ACCESS then
+            Node* target_var = expr.left()
+            Node* method_node = expr.right()
+
+            char* target_class = get_node_return_type(ast, current_method_node, current_class_name, target_var)
+
+            char clean_class[64]
+            int idx = 0
+            for int i = 0; target_class[i] != '\0'; i = i + 1 do
+                if target_class[i] != '*' and target_class[i] != ' ' then
+                    clean_class[idx] = target_class[i]
+                    idx = idx + 1
+                end
+            end
+            clean_class[idx] = '\0'
+
+            Node** children = ast.children()
+            for int i = 0; i < ast.child_count(); i = i + 1 do
+                Node* child = children[i]
+                if child != NULL then
+                    if child.type() == NODE_CLASS_DEF and strcmp(child.value(), clean_class) == 0 then
+                        Node** class_children = child.children()
+                        for int j = 0; j < child.child_count(); j = j + 1 do
+                            Node* m = class_children[j]
+                            if m != NULL and m.type() == NODE_METHOD_DEF and strcmp(m.value(), method_node.value()) == 0 then
+                                return get_data_type(m)
+                            end
+                        end
+                    elif child.type() == NODE_INTERFACE_DEF and strcmp(child.value(), clean_class) == 0 then
+                        Node** iface_children = child.children()
+                        for int j = 0; j < child.child_count(); j = j + 1 do
+                            Node* m = iface_children[j]
+                            if m != NULL and m.type() == NODE_INTERFACE_METHOD_DECL and strcmp(m.value(), method_node.value()) == 0 then
+                                return get_data_type(m)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return "void"
+    }
+
+    bool is_class_name(Node* ast, char* name) {
+        if ast == NULL or name == NULL then return false end
+
+        Node** children = ast.children()
+        for int i = 0; i < ast.child_count(); i = i + 1 do
+            Node* child = children[i]
+            if child != NULL and child.type() == NODE_CLASS_DEF then
+                if child.value() != NULL and strcmp(child.value(), name) == 0 then
+                    return true
+                end
+            end
+        end
+        return false
+    }
+
+    bool is_interface_name(Node* ast, char* name) {
+        if ast == NULL or name == NULL then return false end
+        Node** children = ast.children()
+        for int i = 0; i < ast.child_count(); i++ do
+            Node* child = children[i]
+            if child != NULL and child.type() == NODE_INTERFACE_DEF then
+                if strcmp(child.value(), name) == 0 then return true end
+            end
+        end
+        return false
+    }
+
+    Node* get_interface_node(Node* ast, char* name) {
+        if ast == NULL or name == NULL then return NULL end
+        Node** children = ast.children()
+        for int i = 0; i < ast.child_count(); i = i + 1 do
+            Node* child = children[i]
+            if child != NULL and child.type() == NODE_INTERFACE_DEF then
+                if strcmp(child.value(), name) == 0 then return child end
+            end
+        end
+        return NULL
+    }
+
+    void visit_node(Node* node) {
+        switch node.type()
+            case NODE_DUMMY: break
+
+            case NODE_PROGRAM:
+                current_ast = node
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node** child_list = node.children()
+                    if child_list[i] != NULL then
+                        visit_node(child_list[i])
+                    end
+                end
+                break
+
+            case NODE_CLASS_DEF:
+                current_class = node.value()
+
+                sprintf(forward_structs_buf + strlen(forward_structs_buf), "typedef struct %s %s;\n", node.value(), node.value())
+                sprintf(struct_buf + strlen(struct_buf), "typedef struct %s {\n", node.value())
+
+                bool has_fields = false
+                char init_body[4096]
+                init_body[0] = '\0'
+
+                Node** children = node.children()
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+
+                    if child != NULL then
+                        if child.type() == NODE_FIELD_DEF or child.type() == NODE_FIELD_DEF_ASSIGN then
+                            sprintf(struct_buf + strlen(struct_buf), "%s %s;\n", get_data_type(child), child.value())
+
+                            sprintf(forward_methods_buf + strlen(forward_methods_buf), "void %s_%s_1(%s* self,%s %s_val);\n", current_class, child.value(), current_class, get_data_type(child), child.value())
+                            sprintf(forward_methods_buf + strlen(forward_methods_buf), "%s %s_%s_0(%s* self);\n", get_data_type(child), current_class, child.value(), current_class)
+                            sprintf(body_buf + strlen(body_buf), "void %s_%s_1(%s* self,%s %s_val){self->%s=%s_val;}\n", current_class, child.value(), current_class, get_data_type(child), child.value(), child.value(), child.value())
+                            sprintf(body_buf + strlen(body_buf), "%s %s_%s_0(%s* self){return self->%s;}\n", get_data_type(child), current_class, child.value(), current_class, child.value())
+
+                            if child.type() == NODE_FIELD_DEF_ASSIGN then
+                                Node* val_node = child.left()
+                                if val_node == NULL then val_node = child.right() end
+                                if val_node == NULL and child.child_count() > 0 then
+                                    Node** child_children = child.children()
+                                    val_node = child_children[0]
+                                end
+
+                                if val_node != NULL then
+                                    char* old_body = body_buf
+                                    body_buf = malloc(1024)
+                                    body_buf[0] = '\0'
+
+                                    visit_node(val_node)
+
+                                    int val_len = strlen(body_buf)
+                                    while val_len > 0 and (body_buf[val_len - 1] == ';' or body_buf[val_len - 1] == '\n') do
+                                        body_buf[val_len - 1] = '\0'
+                                        val_len = val_len - 1
+                                    end
+
+                                    sprintf(init_body + strlen(init_body), "self->%s = %s;\n", child.value(), body_buf)
+
+                                    free(body_buf)
+                                    body_buf = old_body
+                                end
+                            end
+
+                            has_fields = true
+                        end
+                    end
+                end
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+
+                    if child != NULL and child.type() != NODE_FIELD_DEF and child.type() != NODE_FIELD_DEF_ASSIGN then
+                        if child.type() == NODE_METHOD_DEF and strcmp(child.value(), "init") == 0 then
+                            current_method = child
+                            Node** m_children = child.children()
+                            int param_count = 0
+
+                            for int j = 0; j < child.child_count(); j = j + 1 do
+                                Node* m_child = m_children[j]
+                                if m_child.type() == NODE_PARAM then
+                                    param_count = m_child.child_count()
+                                    break
+                                end
+                            end
+
+                            sprintf(forward_methods_buf + strlen(forward_methods_buf), "%s %s_%s_%d(%s* self", get_data_type(child), current_class, child.value(), param_count, current_class)
+                            sprintf(body_buf + strlen(body_buf), "%s %s_%s_%d(%s* self", get_data_type(child), current_class, child.value(), param_count, current_class)
+
+                            if param_count > 0 then
+                                strcat(forward_methods_buf, ",")
+                                strcat(body_buf, ",")
+                            end
+
+                            for int j = 0; j < child.child_count(); j = j + 1 do
+                                Node* m_child = m_children[j]
+                                if m_child.type() == NODE_PARAM then
+                                    Node** params = m_child.children()
+                                    for int k = 0; k < m_child.child_count(); k = k + 1 do
+                                        Node* param = params[k]
+                                        sprintf(forward_methods_buf + strlen(forward_methods_buf), "%s %s", get_data_type(param), param.value())
+                                        sprintf(body_buf + strlen(body_buf), "%s %s", get_data_type(param), param.value())
+                                        if k < m_child.child_count() - 1 then
+                                            strcat(forward_methods_buf, ",")
+                                            strcat(body_buf, ",")
+                                        end
+                                    end
+                                end
+                            end
+
+                            strcat(forward_methods_buf, ");\n")
+                            strcat(body_buf, "){\n")
+
+                            strcat(body_buf, init_body)
+
+                            for int j = 0; j < child.child_count(); j = j + 1 do
+                                int len_before = strlen(body_buf)
+                                visit_node(m_children[j])
+                                int len_after = strlen(body_buf)
+                                if len_after > len_before then
+                                    if body_buf[len_after - 1] != ';'
+                                    and body_buf[len_after - 1] != '}' then
+                                        strcat(body_buf, ";\n") end
+                                end
+                            end
+
+                            strcat(body_buf, "}\n")
+                            current_method = NULL
+                        else
+                            visit_node(child)
+                        end
+                    end
+                end
+
+                for int i = 0; i < node.child_count(); i++ do
+                    Node* child = children[i]
+                    if child != NULL and child.type() == NODE_BIND then
+                        Node** binds = child.children()
+                        for int b = 0; b < child.child_count(); b++ do
+                            Node* bind_child = binds[b]
+                            char* iface_name = bind_child.value()
+                            Node* iface_def = get_interface_node(current_ast, iface_name)
+                            if iface_def != NULL then
+                                sprintf(forward_methods_buf + strlen(forward_methods_buf), "#define AS_%s_FROM_%s(obj_ptr) (%s){ .self = (void*)(obj_ptr)", iface_name, current_class, iface_name)
+                                
+                                Node** iface_methods = iface_def.children()
+                                for int m = 0; m < iface_def.child_count(); m++ do
+                                    Node* m_decl = iface_methods[m]
+                                    if m_decl.type() == NODE_INTERFACE_METHOD_DECL then
+                                        int p_count = 0
+                                        if m_decl.child_count() > 0 then
+                                            Node** m_decl_children = m_decl.children()
+                                            Node* m_decl_child = m_decl_children[0]
+                                            p_count = m_decl_child.child_count()
+                                        end
+                                        sprintf(forward_methods_buf + strlen(forward_methods_buf), ", .%s = (void*)%s_%s_%d", m_decl.value(), current_class, m_decl.value(), p_count)
+                                    end
+                                end
+                                strcat(forward_methods_buf, " }\n")
+                            end
+                        end
+                    end
+                end
+
+                if is_method_in_class(current_ast, current_class, "init") == false then
+                    sprintf(forward_methods_buf + strlen(forward_methods_buf), "void %s_init_0(%s* self);\n", current_class, current_class)
+                    sprintf(body_buf + strlen(body_buf), "void %s_init_0(%s* self) {\n%s}\n", current_class, current_class, init_body)
+                end
+
+                if has_fields == false then
+                    sprintf(struct_buf + strlen(struct_buf), "char _empty;\n")
+                end
+
+                sprintf(struct_buf + strlen(struct_buf), "} %s;\n", node.value())
+
+                current_class = NULL
+                break
+
+            case NODE_FIELD_DEF: break
+
+            case NODE_METHOD_DEF:
+                current_method = node
+                Node** children = node.children()
+                int param_count = 0
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+                    if child.type() == NODE_PARAM then
+                        param_count = child.child_count()
+                        break
+                    end
+                end
+
+                sprintf(forward_methods_buf + strlen(forward_methods_buf), "%s %s_%s_%d(%s* self", get_data_type(node), current_class, node.value(), param_count, current_class)
+                sprintf(body_buf + strlen(body_buf), "%s %s_%s_%d(%s* self", get_data_type(node), current_class, node.value(), param_count, current_class)
+
+                if param_count > 0 then
+                    strcat(forward_methods_buf, ",")
+                    strcat(body_buf, ",")
+                end
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+                    if child.type() == NODE_PARAM then
+                        Node** params = child.children()
+                        for int j = 0; j < child.child_count(); j = j + 1 do
+                            Node* param = params[j]
+                            sprintf(forward_methods_buf + strlen(forward_methods_buf), "%s %s", get_data_type(param), param.value())
+                            sprintf(body_buf + strlen(body_buf), "%s %s", get_data_type(param), param.value())
+                            if j < child.child_count() - 1 then
+                                strcat(forward_methods_buf, ",")
+                                strcat(body_buf, ",")
+                            end
+                        end
+                    end
+                end
+
+                strcat(forward_methods_buf, ");\n")
+                strcat(body_buf, "){\n")
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+
+                strcat(body_buf, "}\n")
+
+                current_method = NULL
+                break
+
+            case NODE_ENUM_DEF:
+                sprintf(forward_structs_buf + strlen(forward_structs_buf), "typedef enum {\n")
+
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+                    sprintf(forward_structs_buf + strlen(forward_structs_buf), "%s,\n", child.value())
+                end
+                sprintf(forward_structs_buf + strlen(forward_structs_buf), "} %s;\n", node.value())
+
+                break
+
+            case NODE_ENUM_MEMBER: break
+
+            case NODE_EXTERN_FUNC:
+                current_method = node
+
+                sprintf(body_buf + strlen(body_buf), "%s %s(", get_data_type(node), node.value())
+
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+                    if child.type() == NODE_PARAM then
+                        Node** params = child.children()
+                        for int j = 0; j < child.child_count(); j = j + 1 do
+                            Node* param = params[j]
+                            sprintf(body_buf + strlen(body_buf), "%s %s", get_data_type(param), param.value())
+                            if j < child.child_count() - 1 then
+                                strcat(body_buf, ",")
+                            end
+                        end
+                    end
+                end
+
+                strcat(body_buf, "){\n")
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+
+                strcat(body_buf, "}\n")
+
+                current_method = NULL
+                break
+
+            case NODE_PARAM: break
+
+            case NODE_CONSTRUCTOR_CALL:
+                sprintf(body_buf + strlen(body_buf), "malloc(sizeof(%s));\n", node.value())
+
+                sprintf(body_buf + strlen(body_buf), "%s_init_%d(%s", node.value(), node.child_count(), current_target_var)
+                if node.child_count() > 0 then strcat(body_buf, ",") end
+
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* param = children[i]
+                    visit_node(param)
+                    if i < node.child_count() - 1 then strcat(body_buf, ",") end
+                end
+                strcat(body_buf, ")")
+
+                break
+
+            case NODE_FIELD_DEF_ASSIGN: break
+
+            case NODE_INTERFACE_DEF:
+                sprintf(forward_structs_buf + strlen(forward_structs_buf), "typedef struct %s %s;\n", node.value(), node.value())
+                sprintf(struct_buf + strlen(struct_buf), "struct %s {\n    void* self;\n", node.value())
+
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    Node* child = children[i]
+                    if child.type() == NODE_INTERFACE_METHOD_DECL then
+                        sprintf(struct_buf + strlen(struct_buf), "    %s (*%s)(void*", child.data_type(), child.value())
+                        if child.child_count() > 0 then
+                            Node* param_node = child.children()[0]
+                            Node** params = param_node.children()
+                            for int j = 0; j < param_node.child_count(); j = j + 1 do
+                                sprintf(struct_buf + strlen(struct_buf), ", %s", get_data_type(params[j]))
+                            end
+                        end
+                        strcat(struct_buf, ");\n")
+                    end
+                end
+                strcat(struct_buf, "};\n")
+                break
+
+            case NODE_DECLARE:
+            case NODE_DECLARE_ASSIGN:
+                current_target_var = node.value()
+
+                Node* rhs = node.left()
+                bool is_ctor = false
+                if rhs != NULL and rhs.type() == NODE_FUNC_CALL then
+                    Node* left_node = rhs.left()
+                    if left_node != NULL and left_node.type() == NODE_VAR then
+                        if is_class_name(current_ast, left_node.value()) then
+                            is_ctor = true
+                        end
+                    end
+                end
+
+                char* var_type = get_data_type(node)
+                bool is_ptr = (strchr(var_type, '*') != NULL)
+
+                char clean_type[64]
+                int idx = 0
+                for int i = 0; var_type[i] != '\0'; i = i + 1 do
+                    if var_type[i] != '*' and var_type[i] != ' ' then
+                        clean_type[idx] = var_type[i]
+                        idx = idx + 1
+                    end
+                end
+                clean_type[idx] = '\0'
+
+                if is_interface_name(current_ast, clean_type) and rhs != NULL then
+                    char* rhs_class = get_node_return_type(current_ast, current_method, current_class, rhs)
+                    char clean_rhs[64]
+                    int idx2 = 0
+                    for int j = 0; rhs_class[j] != '\0'; j = j + 1 do
+                        if rhs_class[j] != '*' and rhs_class[j] != ' ' then
+                            clean_rhs[idx2] = rhs_class[j]
+                            idx2 = idx2 + 1
+                        end
+                    end
+                    clean_rhs[idx2] = '\0'
+
+                    sprintf(body_buf + strlen(body_buf), "%s %s = AS_%s_FROM_%s(", var_type, node.value(), clean_type, clean_rhs)
+                    if strchr(rhs_class, '*') == NULL then strcat(body_buf, "&") end
+                    visit_node(rhs)
+                    strcat(body_buf, ");\n")
+                    
+                    current_target_var = NULL
+                    break
+                end
+
+                if is_ctor then
+                    if is_ptr then
+                        char clean_type[64]
+                        int idx = 0
+                        for int i = 0; var_type[i] != '\0'; i = i + 1 do
+                            if var_type[i] != '*' and var_type[i] != ' ' then
+                                clean_type[idx] = var_type[i]
+                                idx = idx + 1
+                            end
+                        end
+                        clean_type[idx] = '\0'
+
+                        sprintf(body_buf + strlen(body_buf), "%s %s = malloc(sizeof(%s));\n", var_type, node.value(), clean_type)
+                        visit_node(rhs)
+                    else
+                        sprintf(body_buf + strlen(body_buf), "%s %s;\n", var_type, node.value())
+                        visit_node(rhs)
+                    end
+                else
+                    sprintf(body_buf + strlen(body_buf), "%s %s", var_type, node.value())
+                    if node.type() == NODE_DECLARE_ASSIGN then
+                        strcat(body_buf, "=")
+                        visit_node(rhs)
+                    end
+                end
+
+                current_target_var = NULL
+                break
+
+            case NODE_ASSIGN:
+                visit_node(node.left())
+                strcat(body_buf, node.value())
+                visit_node(node.right())
+                break
+
+            case NODE_DEREF_ASSIGN: break
+
+            case NODE_RETURN_STMT:
+                if node.left() == NULL then
+                    strcat(body_buf, "return")
+                else
+                    strcat(body_buf, "return ")
+                    visit_node(node.left())
+                end
+                strcat(body_buf, ";\n")
+                break
+
+            case NODE_IF_STMT:
+            case NODE_ELIF_STMT:
+            case NODE_WHILE_STMT:
+                Node** children = node.children()
+                Node* cond = children[0]
+
+                switch node.type()
+                    case NODE_IF_STMT: strcat(body_buf, "if(") break
+                    case NODE_ELIF_STMT: strcat(body_buf, "}else if(") break
+                    case NODE_WHILE_STMT: strcat(body_buf, "while(") break
+                end
+
+                visit_node(cond)
+                strcat(body_buf, "){\n")
+
+                for int i = 1; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+
+                if node.type() != NODE_ELIF_STMT then strcat(body_buf, "}\n") end
+
+                break
+
+            case NODE_ELSE_STMT:
+                sprintf(body_buf + strlen(body_buf), "}else{\n")
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+                break
+
+            case NODE_FOR_STMT:
+                Node** children = node.children()
+
+                Node* init = children[0]
+                Node* cond = children[1]
+                Node* inc = children[2]
+
+                strcat(body_buf, "for(")
+                visit_node(init)
+                strcat(body_buf, ";")
+                visit_node(cond)
+                strcat(body_buf, ";")
+                visit_node(inc)
+                strcat(body_buf, "){\n")
+
+                for int i = 3; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+                strcat(body_buf, "}\n")
+                break
+
+            case NODE_SWITCH_STMT:
+                Node** children = node.children()
+
+                Node* expr = children[0]
+                strcat(body_buf, "switch (")
+                visit_node(expr)
+                strcat(body_buf, "){\n")
+
+                for int i = 1; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+
+                strcat(body_buf, "}\n")                
+
+                break
+
+            case NODE_CASE:
+                Node** children = node.children()
+                Node* expr = children[0]
+                strcat(body_buf, "case ")
+                visit_node(expr)
+                strcat(body_buf, ": {")
+
+                for int i = 1; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+
+                strcat(body_buf, "}")
+                break
+
+            case NODE_ELSE_SWITCH:
+                Node** children = node.children()
+                strcat(body_buf, "default: {\n")
+
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    int len_before = strlen(body_buf)
+                    visit_node(children[i])
+                    int len_after = strlen(body_buf)
+                    if len_after > len_before then
+                        if body_buf[len_after - 1] != ';'
+                        and body_buf[len_after - 1] != '}'
+                        and body_buf[len_after - 1] != '\n' then
+                            strcat(body_buf, ";\n") end
+                    end
+                end
+
+                strcat(body_buf, "}\n")
+
+                break
+
+            case NODE_BREAK:
+                strcat(body_buf, "break;\n")
+                break
+
+            case NODE_CONTINUE:
+                strcat(body_buf, "continue;\n")
+                break
+
+            case NODE_EXPR_STMT: break
+
+            case NODE_PAREN:
+                strcat(body_buf, "(")
+                visit_node(node.left())
+                strcat(body_buf, ")")
+                break
+
+            case NODE_BINARY_EXPR:
+                Node* left = node.left()
+                Node* right = node.right()
+
+                if strcmp("and", node.value()) == 0 then node.value("&&")
+                elif strcmp("or", node.value()) == 0 then node.value("||") end
+
+                if strcmp("===", node.value()) == 0 then
+                    strcat(body_buf, "(__builtin_types_compatible_p(__typeof__(")
+                    visit_node(left)
+                    strcat(body_buf, "), __typeof__(")
+                    visit_node(right)
+                    strcat(body_buf, ")))")
+                else
+                    visit_node(left)
+                    strcat(body_buf, node.value())
+                    visit_node(right)
+                end
+
+                break
+
+            case NODE_UNARY_EXPR:
+                char* op = node.value()
+                if strcmp("++_post", op) == 0
+                or strcmp("--_post", op) == 0 then
+                    op[2] = '\0'
+                    visit_node(node.left())
+                    strcat(body_buf, op)
+                else
+                    strcat(body_buf, op)
+                    visit_node(node.left())
+                end
+                break
+
+            case NODE_VAR:
+                char* var_name = node.value()
+
+                char* local_type = NULL
+                if current_method != NULL then
+                    local_type = get_var_type(current_method, var_name)
+                end
+
+                if current_class != NULL and local_type == NULL and is_class_field(current_ast, current_class, var_name) then
+                    sprintf(body_buf + strlen(body_buf), "self->%s", var_name)
+                else
+                    strcat(body_buf, var_name)
+                end
+                break
+
+            case NODE_NUMBER:
+                strcat(body_buf, node.value())
+                break
+
+            case NODE_CHAR_LIT:
+                sprintf(body_buf + strlen(body_buf), "'%s'", node.value())
+                break
+
+            case NODE_BOOL_LIT:
+                if strcmp("true", node.value()) == 0 then strcat(body_buf, "1")
+                else strcat(body_buf, "0") end
+                break
+
+            case NODE_STRING_LIT:
+                char* val = node.value()
+                strcat(body_buf, "\"")
+
+                for int i = 0; val[i] != '\0'; i = i + 1 do
+                    char temp[2]
+                    temp[0] = val[i]
+                    temp[1] = '\0'
+                    strcat(body_buf, temp)
+                end
+
+                strcat(body_buf, "\"")
+                break
+
+            case NODE_FUNC_CALL:
+                Node* left = node.left()
+
+                if left.type() == NODE_VAR then
+                    char* func_name = left.value()
+
+                    if is_class_name(current_ast, func_name) then
+                        if current_target_var != NULL then
+                            char* var_type = NULL
+                            if current_method != NULL then
+                                var_type = get_var_type(current_method, current_target_var)
+                            end
+
+                            bool is_pointer = false
+                            if var_type != NULL and strchr(var_type, '*') != NULL then
+                                is_pointer = true
+                            end
+
+                            if is_pointer then
+                                sprintf(body_buf + strlen(body_buf), "%s_init_%d(%s", func_name, node.child_count(), current_target_var)
+                            else
+                                sprintf(body_buf + strlen(body_buf), "%s_init_%d(&%s", func_name, node.child_count(), current_target_var)
+                            end
+
+                            if node.child_count() > 0 then strcat(body_buf, ",") end
+
+                            Node** children = node.children()
+                            for int i = 0; i < node.child_count(); i = i + 1 do
+                                visit_node(children[i])
+                                if i < node.child_count() - 1 then strcat(body_buf, ",") end
+                            end
+                            strcat(body_buf, ")")
+                        else
+                            sprintf(body_buf + strlen(body_buf), "({ %s* __tmp = malloc(sizeof(%s)); %s_init_%d(__tmp", func_name, func_name, func_name, node.child_count())
+                            if node.child_count() > 0 then strcat(body_buf, ", ") end
+
+                            Node** children = node.children()
+                            for int i = 0; i < node.child_count(); i = i + 1 do
+                                visit_node(children[i])
+                                if i < node.child_count() - 1 then strcat(body_buf, ", ") end
+                            end
+                            strcat(body_buf, "); __tmp; })")
+                        end
+                        break
+                    end
+
+                    if current_class != NULL
+                    and is_method_in_class(current_ast, current_class, func_name) then
+                        sprintf(body_buf + strlen(body_buf), "%s_%s_%d(self", current_class, func_name, node.child_count())
+                        if node.child_count() > 0 then strcat(body_buf, ",") end
+                    else
+                        visit_node(left)
+                        strcat(body_buf, "(")
+                    end
+                elif left.type() == NODE_CHAIN_ACCESS then
+                    Node* var_node = left.left()
+                    Node* method_node = left.right()
+
+                    char* raw_type = get_node_return_type(current_ast, current_method, current_class, var_node)
+
+                    bool is_pointer = false
+                    if raw_type != NULL and strchr(raw_type, '*') != NULL then
+                        is_pointer = true
+                    end
+
+                    char clean_type[64]
+                    int idx = 0
+                    for int i = 0; raw_type[i] != '\0'; i = i + 1 do
+                        if raw_type[i] != '*' and raw_type[i] != ' ' then
+                            clean_type[idx] = raw_type[i]
+                            idx = idx + 1
+                        end
+                    end
+                    clean_type[idx] = '\0'
+
+                    if strlen(clean_type) == 0 then strcpy(clean_type, "void") end
+
+                    if is_interface_name(current_ast, clean_type) then
+                        visit_node(var_node)
+                        if is_pointer then strcat(body_buf, "->") else strcat(body_buf, ".") end
+                        sprintf(body_buf + strlen(body_buf), "%s(", method_node.value())
+                        
+                        visit_node(var_node)
+                        if is_pointer then strcat(body_buf, "->self") else strcat(body_buf, ".self") end
+                        
+                        if node.child_count() > 0 then strcat(body_buf, ", ") end
+                    else
+                        sprintf(body_buf + strlen(body_buf), "%s_%s_%d(", clean_type, method_node.value(), node.child_count())
+
+                        if is_pointer == false then
+                            strcat(body_buf, "&")
+                        end
+
+                        visit_node(var_node)
+
+                        if node.child_count() > 0 then strcat(body_buf, ", ") end
+                    end
+                end
+
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    visit_node(children[i])
+                    if i < node.child_count() - 1 then strcat(body_buf, ", ") end
+                end
+
+                strcat(body_buf, ")")
+                break
+
+            case NODE_METHOD_CALL: break
+
+            case NODE_CHAIN_ACCESS:
+                visit_node(node.left())
+                Node* right = node.right()
+                sprintf(body_buf + strlen(body_buf), ".%s", right.value())
+                break
+
+            case NODE_SIZEOF:
+                strcat(body_buf, "sizeof(")
+                visit_node(node.left())
+                strcat(body_buf, ")")
+                break
+
+            case NODE_DECLARE_ARRAY:
+                Node** children = node.children()
+                Node* expr = children[0]
+                sprintf(body_buf + strlen(body_buf), "%s %s[", get_data_type(node), node.value())
+                visit_node(expr)
+                strcat(body_buf, "]")
+
+                if node.child_count() > 1 then
+                    strcat(body_buf, " = ")
+                    visit_node(children[1])
+                end
+
+                break
+
+            case NODE_ARRAY_ASSIGN: break
+
+            case NODE_ARRAY_ACCESS:
+                visit_node(node.left())
+                strcat(body_buf, "[")
+                visit_node(node.right())
+                strcat(body_buf, "]")
+                break
+
+            case NODE_ARRAY_METHOD_CALL: break
+
+            case NODE_COMPOUND_LITERAL:
+                strcat(body_buf, "{")
+                Node** children = node.children()
+                for int i = 0; i < node.child_count(); i = i + 1 do
+                    visit_node(children[i])
+                    if i < node.child_count() - 1 then strcat(body_buf, ", ") end
+                end
+                strcat(body_buf, "} ")
+                break
+
+            case NODE_CAST:
+                sprintf(body_buf + strlen(body_buf), "(%s)", node.data_type())
+                visit_node(node.left())
+                break
+
+            case NODE_INCLUDE:
+                sprintf(output_buf + strlen(output_buf), "#include \"%s\"\n", node.value())
+                break
+
+            case NODE_IMPORT:
+                bool import_found = false
+                for int i = 0; i < next_imported; i = i + 1 do
+                    if imported[i] != NULL and strcmp(imported[i], node.value()) == 0 then
+                        import_found = true
+                    end
+                end
+
+                if strcmp(node.value(), source_file_name) == 0 then import_found = true end
+
+                if import_found == true then break end
+
+                imported[next_imported] = node.value()
+                next_imported = next_imported + 1
+
+                FILE* file = fopen(node.value(), "r")
+                if file == NULL then
+                    printf("couldn't find file for import %s\n", node.value())
+                    exit(1)
+                end
+
+                fseek(file, 0, SEEK_END)
+                int file_size = ftell(file)
+                rewind(file)
+
+                char* buffer = malloc(file_size + 1)
+                if buffer == NULL then
+                    fclose(file)
+                    printf("error while allocating memory for %s\n", node.value())
+                    exit(1)
+                end
+
+                int bytes_read = fread(buffer, 1, file_size, file)
+                buffer[bytes_read] = '\0'
+                fclose(file)
+
+                Lexer* lexer = Lexer(buffer)
+                int capacity = 16
+                int token_count = 0
+                Token** tokens = malloc(capacity * sizeof(Token*))
+
+                while true do
+                    Token* token = lexer.get_next_token()
+                    if token == NULL then break end
+
+                    if token_count >= capacity then
+                        capacity = capacity * 2
+                        tokens = realloc(tokens, capacity * sizeof(Token*))
+                    end
+
+                    tokens[token_count] = token
+                    token_count = token_count + 1
+                end
+
+                if token_count >= capacity then
+                    capacity = capacity + 1
+                    tokens = realloc(tokens, capacity * sizeof(Token*))
+                end
+
+                Token* eof = Token(TOKEN_EOF, "")
+                tokens[token_count] = eof
+                token_count = token_count + 1
+
+                Parser* parser = Parser(tokens, token_count)
+                Node* imported_ast = parser.parse()
+                Node** imported_children = imported_ast.children()
+
+                int old_count = current_ast.child_count()
+
+                for int i = 0; i < imported_ast.child_count(); i = i + 1 do
+                    if imported_children[i] != NULL then
+                        current_ast.add_child(imported_children[i])
+                    end
+                end
+
+                Node** current_children = current_ast.children()
+                int new_count = current_ast.child_count()
+                int num_imported = new_count - old_count
+
+                if num_imported > 0 then
+                    int import_idx = -1
+                    for int i = 0; i < old_count; i = i + 1 do
+                        if current_children[i] == node then
+                            import_idx = i
+                            break
+                        end
+                    end
+
+                    if import_idx != -1 then
+                        Node** temp = malloc(new_count * sizeof(Node*))
+
+                        for int i = 0; i <= import_idx; i = i + 1 do
+                            temp[i] = current_children[i]
+                        end
+
+                        for int i = 0; i < num_imported; i = i + 1 do
+                            temp[import_idx + 1 + i] = current_children[old_count + i]
+                        end
+
+                        for int i = import_idx + 1; i < old_count; i = i + 1 do
+                            temp[i + num_imported] = current_children[i]
+                        end
+
+                        for int i = 0; i < new_count; i = i + 1 do
+                            current_children[i] = temp[i]
+                        end
+
+                        free(temp)
+
+                        node.init(NODE_DUMMY)
+                    end
+                end
+
+                break
+
+            case NODE_GUARD:
+                is_guard = true
+                sprintf(forward_structs_buf + strlen(forward_structs_buf), "#ifndef %s_H\n#define %s_H\n", node.value(), node.value())
+                sprintf(footer_buf + strlen(footer_buf), "#endif")
+                break
+
+            case NODE_DEFINE:
+                Node** children = node.children()
+                Node* child = children[0]
+                sprintf(output_buf + strlen(output_buf), "#define %s %s\n", node.value(), child.value())
+                break
+        end
+    }
+
+    char* generate(Node* ast) {
+        source_file_name = ast.value()
+        visit_node(ast)
+        strcat(output_buf, forward_structs_buf)
+        strcat(output_buf, forward_methods_buf)
+        strcat(output_buf, struct_buf)
+        strcat(output_buf, body_buf)
+        if is_guard == false then strcat(footer_buf, "int main(int argc, char** argv){\n    Main main_obj;\n    Main_init_0(&main_obj);\n    int res = Main_main_2(&main_obj, argc, argv);\n    return res;\n}") end
+        strcat(output_buf, footer_buf)
+
+        free(forward_structs_buf)
+        free(forward_methods_buf)
+        free(struct_buf)
+        free(body_buf)
+        free(footer_buf)
+        free(imported)
+
+        return output_buf
+    }
+}

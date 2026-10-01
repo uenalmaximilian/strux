@@ -1,0 +1,217 @@
+/*
+guard EXAMPLE_GUARD_DEFINITION
+transpile as a guarded C header file
+this will remove the main function and the need
+for the forced Main class and main method
+*/
+include "stdio.h" // include C headers
+import "demo/importable.strx" // import strux files
+
+enum Color {
+    RED,
+    GREEN,
+    BLUE,
+    YELLOW,
+    ORANGE,
+    PINK
+}
+
+extern "C" Foo* get_foo_class() {
+    Foo* foo = Foo('C') // creates object on the heap and calls init
+    return foo
+}
+
+enum LogLevel {
+    DEBUG,
+    INFO,
+    WARNING,
+    ERROR,
+    CRITICAL,
+    NONE
+}
+
+interface Loggable { // interface definition
+    // function declarations for interfacing
+    void log(char* msg, LogLevel level)
+    char* get_log_level_string(LogLevel level)
+}
+
+class Foo {
+    /* assign an interface to a class
+    Bind multiple interfaces by seperating them with commas (bind InterfaceA, InterfaceB)
+    */
+    bind Loggable
+
+    int variable = 42 // automatic initialization
+    char character // unitialized
+    Color color = YELLOW
+    LogLevel log_level = DEBUG
+
+    /* init is automatically called when the object is created on the heap
+    but character will only be set with the constructor
+    CONSTRUCTOR WILL NOT BE CALLED IF THE OBJECT IS CREATED ON THE STACK
+    */
+    void init(char character_) {
+        character = character_ // initialize with constructor
+    }
+
+    int add_nums(int a, int b) {
+        return a + b
+    }
+
+    void control_structure_demo() {
+        if variable == 42 then // no self or this before the field needed
+            printf("variable is exactly %d\n", variable)
+        elif variable > 42 then
+            printf("variable is greater than 42\n")
+        else // no then needed
+            printf("variable is less than 42\n")
+        end
+
+        while variable > 0 do // do for loops, then for if
+            variable-- // postfix decrement
+            continue
+        end
+
+        for int i = -10 /* negative numbers */; i < variable; ++i /* prefix increment */ do
+            printf("%d ", i)
+        end
+        printf("\n")
+
+        switch variable // no then or do needed
+            case 1:
+                break // break after every case to prevent fallthrough
+            case 2:
+                break
+            case 3:
+                break
+            else: // uses a colon which is different to the if-block else statement
+                break
+        end
+    }
+
+    void variable_demo() {
+        // datatypes
+        int integer = 2000000000
+        short half_of_int = 32000
+        char character = 'A'
+        printf("%c\n", character)
+        float floating_point = 3.14f
+        double double_float = 3.14159f
+        bool boolean = true
+
+        // arrays
+        char string[16]
+        string[15] = '\0'
+
+        // pointers
+        int* integer_ptr = &integer
+        printf("integer addr: %p\n", integer_ptr)
+        *integer_ptr = 42
+        printf("new int: %d\n", *integer_ptr)
+
+        // compound literal
+        int nums[3] = {1, 2, 3}
+        printf("1st element: %d\n", nums[0])
+    }
+
+    void operator_demo() {
+        int val = 42
+
+        // arithmetic
+        val = val + 1 // standard assignment
+        val += 1 // compound assignment
+
+        val = val - 1
+        val -= 1
+
+        val = val * 1
+        val *= 1
+
+        val = val / 1
+        val /= 1
+
+        val = val % 1
+        val %= 1
+
+        // bitwise
+        val = val & 1
+        val &= 1
+
+        val = val | 1
+        val |= 1
+
+        val = val ^ 1
+        val ^= 1
+
+        val = ~val
+
+        val = val << 1
+        val <<= 1
+
+        val = val >> 1
+        val >>= 1
+
+        // comparisons
+        bool comp_result = false
+
+        comp_result = val == 1
+        comp_result = val != 1
+        comp_result = val > 1
+        comp_result = val < 1
+        comp_result = val >= 1
+        comp_result = val <= 1
+        comp_result = val === 'A' // only does type comparison, ignores values completely
+        comp_result = val == 1 and val === 1
+        comp_result = val > 1 or val < 1
+
+        // sizeof
+        int sizeof_result = 0
+        sizeof_result = sizeof(val)
+
+        // cast
+        int* ptr = (int*)malloc(sizeof(int))
+        free((void*)ptr)
+    }
+
+    void log(char* msg, LogLevel level) {
+        if level >= log_level then
+            printf("[%s] %s", get_log_level_string(level), msg)
+        end
+    }
+
+    char* get_log_level_string(LogLevel level) {
+        switch level:
+            case DEBUG: return "DEBUG"
+            case INFO: return "INFO"
+            case WARNING: return "WARNING"
+            case ERROR: return "ERROR"
+            case CRITICAL: return "CRITICAL"
+            case NONE: return "NONE"
+            else: return "UNKNOWN"
+        end
+    }
+}
+
+class Main {
+    int main(int argc, char** argv) {
+        Foo foo // creates object on the stack
+        foo.init('B') // calling init manually because object lives on the stack
+
+        printf("Hello, World!\n") // native C functions
+
+        printf("variable: %d\nresult: %d\n", foo.variable() /* <-- variable getter */, foo.add_nums(10, 20) /* <-- method call */ )
+
+        foo.variable(1337) // variable setter
+        printf("variable after change: %d\n", foo.variable())
+
+        foo.control_structure_demo()
+        foo.variable_demo()
+        foo.operator_demo()
+
+        Loggable logger = foo // map class to interface
+        logger.log("Hello, Interface!\n", INFO) // use interface
+
+        return 0
+    }
+}
