@@ -69,11 +69,20 @@ class Main {
         Node* ast = parser.parse()
         ast.value(argv[1])
 
-        Generator* gen = Generator()
+        bool freestanding = false
+        for int i = 2; i < argc; i++ do
+            if strcmp(argv[i], "--freestanding") == 0 then freestanding = true end
+        end
+
+        Generator* gen = Generator(freestanding)
         char* output = gen.generate(ast)
 
         char cmd[1024]
         snprintf(cmd, sizeof(cmd), "gcc -xc -")
+
+        if freestanding == true then
+            strcat(cmd, "-ffreestanding -nostdlib")
+        end
 
         bool emit_c = false
         for int i = 2; i < argc; i++ do

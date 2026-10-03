@@ -338,6 +338,11 @@ class Lexer {
                         advance()
                         Token* t = create_token(TOKEN_DEC, "--")
                         return t
+                    elif peek_char(1) == '>' then
+                        advance()
+                        advance()
+                        Token* t = create_token(TOKEN_ARROW, "->")
+                        return t
                     end
                     Token* t = create_token(TOKEN_MINUS, get_current_char_as_string())
                     return advance_with_token(t)

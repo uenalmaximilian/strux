@@ -21,8 +21,11 @@ class Generator {
     Node* current_ast = NULL
     char* current_target_var = NULL
     Node* current_method = NULL
+    bool freestanding = false
 
-    void init() {
+    void init(bool freestanding_) {
+        freestanding = freestanding_
+
         forward_structs_buf = malloc(1024 * 1024)
         forward_structs_buf[0] = '\0'
 
@@ -43,7 +46,9 @@ class Generator {
 
         imported = calloc(64, sizeof(char*))
 
-        strcat(output_buf, "#include <stdlib.h>\n")
+        if freestanding == false then
+            strcat(output_buf, "#include <stdlib.h>\n")
+        end
     }
 
     char* get_data_type(Node* node) {
@@ -1075,7 +1080,11 @@ class Generator {
             case NODE_CHAIN_ACCESS:
                 visit_node(node.left())
                 Node* right = node.right()
-                sprintf(body_buf + strlen(body_buf), ".%s", right.value())
+                if node.value() != NULL and strcmp(node.value(), "->") == 0 then
+                    sprintf(body_buf + strlen(body_buf), "->%s", right.value())
+                else
+                    sprintf(body_buf + strlen(body_buf), ".%s", right.value())
+                end
                 break
 
             case NODE_SIZEOF:
@@ -1264,7 +1273,11 @@ class Generator {
         strcat(output_buf, forward_methods_buf)
         strcat(output_buf, struct_buf)
         strcat(output_buf, body_buf)
-        if is_guard == false then strcat(footer_buf, "int main(int argc, char** argv){\n    Main main_obj;\n    Main_init_0(&main_obj);\n    int res = Main_main_2(&main_obj, argc, argv);\n    return res;\n}") end
+
+        if is_guard == false and freestanding == false then
+            strcat(footer_buf, "int main(int argc, char** argv){\n    Main main_obj;\n    Main_init_0(&main_obj);\n    int res = Main_main_2(&main_obj, argc, argv);\n    return res;\n}")
+        end
+
         strcat(output_buf, footer_buf)
 
         free(forward_structs_buf)

@@ -289,10 +289,12 @@ class Parser {
                 expect(TOKEN_RBRACKET)
                 expr = arr_node
 
-            elif peek(0).type() == TOKEN_DOT then
-                advance()
+            elif peek(0).type() == TOKEN_DOT or peek(0).type() == TOKEN_ARROW then
+                Token* op = advance()
                 Token* member = expect(TOKEN_ID)
+                
                 Node* chain_node = Node(NODE_CHAIN_ACCESS)
+                chain_node.value(op.value())
                 chain_node.left(expr)
                 
                 Node* member_node = Node(NODE_VAR)
@@ -300,6 +302,7 @@ class Parser {
                 chain_node.right(member_node)
                 
                 expr = chain_node
+
             elif peek(0).type() == TOKEN_INC or peek(0).type() == TOKEN_DEC then
                 if expr != NULL and expr.type() != NODE_NUMBER and expr.type() != NODE_STRING_LIT then
                     Token* op = advance()

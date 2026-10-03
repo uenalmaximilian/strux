@@ -46,6 +46,7 @@ enum TokenType {
     TOKEN_RBRACKET,
 
     TOKEN_DOT,
+    TOKEN_ARROW,
     TOKEN_COMMA,
     TOKEN_COLON,
     TOKEN_SEMICOLON,
@@ -145,6 +146,7 @@ class Token {
             case TOKEN_LBRACKET: return "LEFT_BRACKET"
             case TOKEN_RBRACKET: return "RIGHT_BRACKET"
             case TOKEN_DOT: return "DOT"
+            case TOKEN_ARROW: return "ARROW"
             case TOKEN_COMMA: return "COMMA"
             case TOKEN_COLON: return "COLON"
             case TOKEN_SEMICOLON: return "SEMICOLON"
