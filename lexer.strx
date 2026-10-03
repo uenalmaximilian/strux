@@ -230,6 +230,28 @@ class Lexer {
         value[0] = '\0'
         bool is_float = false
 
+        if current_char == '0' and (peek_char(1) == 'x' or peek_char(1) == 'X') then
+            char* s = get_current_char_as_string()
+            value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+            strcat(value, s)
+            advance()
+
+            s = get_current_char_as_string()
+            value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+            strcat(value, s)
+            advance()
+
+            while isxdigit(current_char) do
+                s = get_current_char_as_string()
+                value = realloc(value, (strlen(value) + strlen(s) + 1) * sizeof(char))
+                strcat(value, s)
+                advance()
+            end
+
+            Token* t = create_token(TOKEN_NUMBER, value)
+            return t
+        end
+
         while isdigit(current_char) or current_char == '.' do
             if current_char == '.' then is_float = true end
 
