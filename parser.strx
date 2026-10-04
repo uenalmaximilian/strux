@@ -30,6 +30,12 @@ class Parser {
     }
 
     Token* expect(TokenType expected) {
+        if expected != TOKEN_SEMICOLON then
+            while peek(0).type() == TOKEN_SEMICOLON do
+                advance()
+            end
+        end
+
         Token* t = advance()
         if t.type() != expected then
             printf("Syntax Error [%d:%d]: Expected '%s', got '%s' (value: '%s')\n", t.line(), t.col(), t.get_token_type_name(expected), t.get_token_type_name(t.type()), t.value())
@@ -394,6 +400,8 @@ class Parser {
     }
 
     Node* parse_statement() {
+        while peek(0).type() == TOKEN_SEMICOLON do advance() end
+
         switch peek(0).type()
             case TOKEN_IF: return parse_if()
             case TOKEN_WHILE: return parse_while()
