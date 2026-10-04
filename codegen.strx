@@ -139,10 +139,7 @@ class Generator {
     }
 
     bool is_class_field(Node* ast, char* class_name, char* var_name) {
-        if ast == NULL
-        or class_name == NULL
-        or var_name == NULL then
-            return false end
+        if ast == NULL or class_name == NULL or var_name == NULL then return false end
 
         Node** children = ast.children()
         for int i = 0; i < ast.child_count(); i = i + 1 do
@@ -151,7 +148,7 @@ class Generator {
                 Node** class_children = child.children()
                 for int j = 0; j < child.child_count(); j = j + 1 do
                     Node* m = class_children[j]
-                    if m != NULL and (m.type() == NODE_FIELD_DEF or m.type() == NODE_FIELD_DEF_ASSIGN) then
+                    if m != NULL and (m.type() == NODE_FIELD_DEF or m.type() == NODE_FIELD_DEF_ASSIGN or m.type() == NODE_DECLARE_ARRAY) then
                         if strcmp(m.value(), var_name) == 0 then
                             return true
                         end
@@ -171,7 +168,7 @@ class Generator {
                 Node** class_children = child.children()
                 for int j = 0; j < child.child_count(); j = j + 1 do
                     Node* m = class_children[j]
-                    if m != NULL and (m.type() == NODE_FIELD_DEF or m.type() == NODE_FIELD_DEF_ASSIGN) then
+                    if m != NULL and (m.type() == NODE_FIELD_DEF or m.type() == NODE_FIELD_DEF_ASSIGN or m.type() == NODE_DECLARE_ARRAY) then
                         if strcmp(m.value(), var_name) == 0 then
                             return get_data_type(m)
                         end
@@ -377,6 +374,21 @@ class Generator {
                             end
 
                             has_fields = true
+                        elif child.type() == NODE_DECLARE_ARRAY then
+                            char* old_body = body_buf
+                            body_buf = malloc(1024)
+                            body_buf[0] = '\0'
+
+                            if child.child_count() > 0 then
+                                visit_node(child.children()[0])
+                            end
+
+                            sprintf(struct_buf + strlen(struct_buf), "%s %s[%s];\n", get_data_type(child), child.value(), body_buf)
+
+                            free(body_buf)
+                            body_buf = old_body
+
+                            has_fields = true
                         end
                     end
                 end
@@ -384,7 +396,7 @@ class Generator {
                 for int i = 0; i < node.child_count(); i = i + 1 do
                     Node* child = children[i]
 
-                    if child != NULL and child.type() != NODE_FIELD_DEF and child.type() != NODE_FIELD_DEF_ASSIGN then
+                    if child != NULL and child.type() != NODE_FIELD_DEF and child.type() != NODE_FIELD_DEF_ASSIGN and child.type() != NODE_DECLARE_ARRAY then
                         if child.type() == NODE_METHOD_DEF and strcmp(child.value(), "init") == 0 then
                             current_method = child
                             Node** m_children = child.children()
