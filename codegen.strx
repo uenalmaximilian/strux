@@ -84,7 +84,7 @@ class Generator {
         end
 
         int t = node.type()
-        if t == NODE_DECLARE or t == NODE_DECLARE_ASSIGN then
+        if t == NODE_DECLARE or t == NODE_DECLARE_ASSIGN or t == NODE_DECLARE_ARRAY then 
             if node.value() != NULL and strcmp(node.value(), var_name) == 0 then 
                 return get_data_type(node)
             end
@@ -181,6 +181,10 @@ class Generator {
 
     char* get_node_return_type(Node* ast, Node* current_method_node, char* current_class_name, Node* expr) {
         if expr == NULL then return "void" end
+
+        if expr.type() == NODE_ARRAY_ACCESS then
+            return get_node_return_type(ast, current_method_node, current_class_name, expr.left())
+        end
 
         if expr.type() == NODE_VAR then
             char* t = NULL
@@ -694,13 +698,15 @@ class Generator {
                     end
                     clean_rhs[idx2] = '\0'
 
-                    sprintf(body_buf + strlen(body_buf), "%s %s = AS_%s_FROM_%s(", var_type, node.value(), clean_type, clean_rhs)
-                    if strchr(rhs_class, '*') == NULL then strcat(body_buf, "&") end
-                    visit_node(rhs)
-                    strcat(body_buf, ");\n")
-                    
-                    current_target_var = NULL
-                    break
+                    if strcmp(clean_type, clean_rhs) != 0 then
+                        sprintf(body_buf + strlen(body_buf), "%s %s = AS_%s_FROM_%s(", var_type, node.value(), clean_type, clean_rhs)
+                        if strchr(rhs_class, '*') == NULL then strcat(body_buf, "&") end
+                        visit_node(rhs)
+                        strcat(body_buf, ");\n")
+                        
+                        current_target_var = NULL
+                        break
+                    end
                 end
 
                 if is_ctor then
@@ -733,6 +739,41 @@ class Generator {
                 break
 
             case NODE_ASSIGN:
+                char* left_type = get_node_return_type(current_ast, current_method, current_class, node.left())
+                char clean_l[64]
+                int l_idx = 0
+                for int i = 0; left_type[i] != '\0'; i = i + 1 do
+                    if left_type[i] != '*' and left_type[i] != ' ' then
+                        clean_l[l_idx] = left_type[i]
+                        l_idx = l_idx + 1
+                    end
+                end
+                clean_l[l_idx] = '\0'
+
+                Node* node_right = node.right()
+                if is_interface_name(current_ast, clean_l) and node_right.type() != NODE_CAST then
+                    char* right_type = get_node_return_type(current_ast, current_method, current_class, node_right)
+                    char clean_r[64]
+                    int r_idx = 0
+                    for int i = 0; right_type[i] != '\0'; i = i + 1 do
+                        if right_type[i] != '*' and right_type[i] != ' ' then
+                            clean_r[r_idx] = right_type[i]
+                            r_idx = r_idx + 1
+                        end
+                    end
+                    clean_r[r_idx] = '\0'
+
+                    if strcmp(clean_l, clean_r) != 0 and is_class_name(current_ast, clean_r) then
+                        visit_node(node.left())
+                        strcat(body_buf, node.value())
+                        sprintf(body_buf + strlen(body_buf), "AS_%s_FROM_%s(", clean_l, clean_r)
+                        if strchr(right_type, '*') == NULL then strcat(body_buf, "&") end
+                        visit_node(node.right())
+                        strcat(body_buf, ")")
+                        break
+                    end
+                end
+
                 visit_node(node.left())
                 strcat(body_buf, node.value())
                 visit_node(node.right())
@@ -1057,6 +1098,14 @@ class Generator {
                     if strlen(clean_type) == 0 then strcpy(clean_type, "void") end
 
                     if is_interface_name(current_ast, clean_type) then
+                        char* ret_type = get_node_return_type(current_ast, current_method, current_class, left)
+                        bool is_void = (ret_type != NULL and strcmp(ret_type, "void") == 0)
+
+                        strcat(body_buf, "(")
+                        visit_node(var_node)
+                        if is_pointer then strcat(body_buf, "->") else strcat(body_buf, ".") end
+                        sprintf(body_buf + strlen(body_buf), "%s ? ", method_node.value())
+
                         visit_node(var_node)
                         if is_pointer then strcat(body_buf, "->") else strcat(body_buf, ".") end
                         sprintf(body_buf + strlen(body_buf), "%s(", method_node.value())
@@ -1065,6 +1114,19 @@ class Generator {
                         if is_pointer then strcat(body_buf, "->self") else strcat(body_buf, ".self") end
                         
                         if node.child_count() > 0 then strcat(body_buf, ", ") end
+
+                        Node** children = node.children()
+                        for int i = 0; i < node.child_count(); i = i + 1 do
+                            visit_node(children[i])
+                            if i < node.child_count() - 1 then strcat(body_buf, ", ") end
+                        end
+
+                        if is_void then
+                            strcat(body_buf, ") : (void)0)")
+                        else
+                            strcat(body_buf, ") : 0)")
+                        end
+                        break
                     else
                         sprintf(body_buf + strlen(body_buf), "%s_%s_%d(", clean_type, method_node.value(), node.child_count())
 
@@ -1115,6 +1177,8 @@ class Generator {
                 if node.child_count() > 1 then
                     strcat(body_buf, " = ")
                     visit_node(children[1])
+                else
+                    strcat(body_buf, " = {0}\n")
                 end
 
                 break
@@ -1141,8 +1205,41 @@ class Generator {
                 break
 
             case NODE_CAST:
-                sprintf(body_buf + strlen(body_buf), "(%s)", node.data_type())
-                visit_node(node.left())
+                char* cast_type = node.data_type()
+                char clean_cast[64]
+                int c_idx = 0
+                for int i = 0; cast_type[i] != '\0'; i = i + 1 do
+                    if cast_type[i] != '*' and cast_type[i] != ' ' then
+                        clean_cast[c_idx] = cast_type[i]
+                        c_idx = c_idx + 1
+                    end
+                end
+                clean_cast[c_idx] = '\0'
+
+                if is_interface_name(current_ast, clean_cast) then
+                    char* rhs_class = get_node_return_type(current_ast, current_method, current_class, node.left())
+                    char clean_rhs[64]
+                    int r_idx = 0
+                    for int i = 0; rhs_class[i] != '\0'; i = i + 1 do
+                        if rhs_class[i] != '*' and rhs_class[i] != ' ' then
+                            clean_rhs[r_idx] = rhs_class[i]
+                            r_idx = r_idx + 1
+                        end
+                    end
+                    clean_rhs[r_idx] = '\0'
+
+                    if strcmp(clean_cast, clean_rhs) == 0 then
+                        visit_node(node.left())
+                    else
+                        sprintf(body_buf + strlen(body_buf), "AS_%s_FROM_%s(", clean_cast, clean_rhs)
+                        if strchr(rhs_class, '*') == NULL then strcat(body_buf, "&") end
+                        visit_node(node.left())
+                        strcat(body_buf, ")")
+                    end
+                else
+                    sprintf(body_buf + strlen(body_buf), "(%s)", node.data_type())
+                    visit_node(node.left())
+                end
                 break
 
             case NODE_INCLUDE:
