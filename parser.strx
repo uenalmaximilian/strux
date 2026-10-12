@@ -399,6 +399,24 @@ class Parser {
         end
     }
 
+    bool is_expr_start() {
+        TokenType t = peek(0).type()
+        return t == TOKEN_NUMBER 
+            or t == TOKEN_STRING 
+            or t == TOKEN_CHAR 
+            or t == TOKEN_BOOL 
+            or t == TOKEN_ID 
+            or t == TOKEN_LPAREN 
+            or t == TOKEN_LBRACE 
+            or t == TOKEN_SIZEOF 
+            or t == TOKEN_MINUS 
+            or t == TOKEN_BIT_NOT 
+            or t == TOKEN_ASTERISK 
+            or t == TOKEN_AMPERSAND 
+            or t == TOKEN_INC 
+            or t == TOKEN_DEC
+    }
+
     Node* parse_statement() {
         while peek(0).type() == TOKEN_SEMICOLON do advance() end
 
@@ -489,7 +507,7 @@ class Parser {
         expect(TOKEN_RETURN)
         Node* ret_node = Node(NODE_RETURN_STMT)
 
-        if peek(0).type() != TOKEN_RBRACE and peek(0).type() != TOKEN_END then
+        if is_expr_start() then
             ret_node.left(parse_expr())
         end
 
